@@ -33,8 +33,9 @@ export function Shell({ children, activeTab, onTabChange }: ShellProps) {
         <div className="flex h-screen w-full bg-[#1e1e1e] text-zinc-100">
             {/* Sidebar */}
             <aside className="w-64 border-r border-zinc-800 bg-[#191919] pt-10 pb-4 flex flex-col px-4 text-xs select-none draggable">
-                <div className="mb-8 px-2">
-                    <h1 className="text-lg font-bold tracking-tight">MacSCP</h1>
+                <div className="mb-8 px-2 flex items-center gap-3">
+                    <img src="/logo.png" alt="MacSCP Logo" className="h-8 w-8 rounded-lg shadow-lg" />
+                    <h1 className="text-xl font-bold tracking-tight text-white">MacSCP</h1>
                 </div>
 
                 <div className="space-y-1">

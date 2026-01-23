@@ -62,6 +62,7 @@ function createWindow() {
     vibrancy: 'under-window',
     visualEffectState: 'active',
     trafficLightPosition: { x: 15, y: 15 },
+    icon: path.join(process.env.VITE_PUBLIC, 'logo.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       sandbox: false,
