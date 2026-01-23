@@ -133,10 +133,15 @@ export function TransferManager() {
                                 <div className="space-y-1">
                                     <div className="flex justify-between text-[10px] text-zinc-400">
                                         <span className='flex items-center gap-1'>
-                                            {task.status === 'pending' && <><Clock className='h-3 w-3' /> Pending</>}
+                                            {task.status === 'pending' && (
+                                                <span className="flex items-center gap-1">
+                                                    <Clock className="h-3 w-3" />
+                                                    {task.retryCount && task.retryCount > 0 ? `Retrying (${task.retryCount}/3)...` : 'Pending'}
+                                                </span>
+                                            )}
                                             {task.status === 'active' && <span>{formatSize(task.transferredSize)} of {formatSize(task.totalSize)}</span>}
                                             {task.status === 'completed' && <span className='text-green-500'>Completed</span>}
-                                            {task.status === 'failed' && <span className='text-red-500' title={task.error}>Failed</span>}
+                                            {task.status === 'failed' && <span className='text-red-500 font-medium' title={task.error}>Failed</span>}
                                             {task.status === 'cancelled' && <span className='text-zinc-500'>Cancelled</span>}
                                             {task.status === 'interrupted' && <span className='text-amber-500'>Interrupted ({Math.round((task.transferredSize / task.totalSize) * 100)}%)</span>}
                                         </span>

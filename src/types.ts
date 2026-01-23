@@ -44,6 +44,7 @@ export interface TransferTask {
     transferredSize: number
     speed: number // bytes per second
     error?: string
+    retryCount?: number
 }
 
 export const defaultSettings: AppSettings = {

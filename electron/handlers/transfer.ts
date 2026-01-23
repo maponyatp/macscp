@@ -47,6 +47,12 @@ export class TransferManager {
                 return { ...task, speed: 0 }
             })
             this.emitQueue()
+
+            // Auto-resume interrupted tasks on startup if any
+            if (this.queue.some(t => t.status === 'interrupted')) {
+                console.log('Resuming interrupted tasks...')
+                this.processQueue()
+            }
         } catch (err) {
             // Ignore if file doesn't exist
             this.queue = []
@@ -70,7 +76,8 @@ export class TransferManager {
             status: 'pending',
             progress: 0,
             transferredSize: 0,
-            speed: 0
+            speed: 0,
+            retryCount: 0
         }
         this.queue.push(newTask)
         this.saveQueue()
@@ -113,10 +120,9 @@ export class TransferManager {
                     nextTask.progress = Math.round((totalTransferred / nextTask.totalSize) * 100)
                 }
 
-                // Calculate speed every 500ms or so
                 if (elapsed > 500) {
                     const bytesSinceLast = totalTransferred - lastTransferred
-                    nextTask.speed = (bytesSinceLast / elapsed) * 1000 // bytes per second
+                    nextTask.speed = (bytesSinceLast / elapsed) * 1000
                     lastTransferred = totalTransferred
                     lastTime = now
                     this.emitQueue()
@@ -132,10 +138,21 @@ export class TransferManager {
 
             nextTask.status = 'completed'
             nextTask.progress = 100
+            nextTask.retryCount = 0
         } catch (err) {
             console.error('Transfer failed:', err)
-            nextTask.status = 'failed'
-            nextTask.error = err instanceof Error ? err.message : String(err)
+
+            const maxRetries = 3
+            nextTask.retryCount = (nextTask.retryCount || 0) + 1
+
+            if (nextTask.retryCount <= maxRetries) {
+                nextTask.status = 'pending' // Re-queue
+                nextTask.error = `Retry ${nextTask.retryCount}/${maxRetries}: ${err instanceof Error ? err.message : String(err)}`
+                console.log(`Auto-retrying task ${nextTask.id} (${nextTask.retryCount}/${maxRetries})`)
+            } else {
+                nextTask.status = 'failed'
+                nextTask.error = err instanceof Error ? err.message : String(err)
+            }
         } finally {
             this.activeTasks--
             this.saveQueue()

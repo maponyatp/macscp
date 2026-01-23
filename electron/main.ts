@@ -12,6 +12,25 @@ import { syncEngine } from './handlers/sync'
 import { fileWatcher } from './handlers/watcher'
 import { encryptionManager } from './handlers/encryption'
 
+async function cleanupTempDrags(app: Electron.App) {
+  const tempRoot = app.getPath('temp')
+  try {
+    const files = await fs.readdir(tempRoot)
+    for (const file of files) {
+      if (file.startsWith('macscp-drag-') || file.startsWith('macscp-edit')) {
+        const fullPath = path.join(tempRoot, file)
+        try {
+          await fs.rm(fullPath, { recursive: true, force: true })
+        } catch (e) {
+          // Ignore errors during cleanup
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to cleanup temp directories:', err)
+  }
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // The built directory structure
@@ -121,11 +140,11 @@ ipcMain.handle('remote:edit-external', async (event, remotePath) => {
 ipcMain.handle('remote:start-drag', async (event, remotePath) => {
   try {
     const localPath = await remoteDispatcher.startDrag(remotePath)
-    // We need an icon. For now, we'll use a generic one or none (macOS will provide default).
-    // Actually startDrag requires an icon.
+    // Use a more appropriate icon if available, or just generic file icon
+    // Note: drag requires a valid file path for the icon
     event.sender.startDrag({
       file: localPath,
-      icon: path.join(__dirname, '../public/file-icon.png') // Fallback required
+      icon: path.join(process.env.VITE_PUBLIC, 'file-icon.png')
     })
   } catch (err) {
     console.error('Failed to start native drag:', err)
@@ -183,4 +202,7 @@ app.on('activate', () => {
   }
 })
 
-app.whenReady().then(createWindow)
+app.whenReady().then(async () => {
+  await cleanupTempDrags(app)
+  createWindow()
+})
