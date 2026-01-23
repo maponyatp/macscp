@@ -1,9 +1,16 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { fileURLToPath } from 'node:url'
+import fs from 'node:fs/promises'
+import { watch } from 'node:fs'
 import path from 'node:path'
+import { remoteDispatcher } from './handlers/remote'
 import { sshHandler } from './handlers/ssh'
 import { handleLocalList } from './handlers/local'
 import { setupSettingsHandlers } from './handlers/settings'
+import { transferManager } from './handlers/transfer'
+import { syncEngine } from './handlers/sync'
+import { fileWatcher } from './handlers/watcher'
+import { encryptionManager } from './handlers/encryption'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -23,7 +30,7 @@ export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 
-process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
+process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'parent') : RENDERER_DIST
 
 let win: typeof BrowserWindow.prototype | null
 
@@ -56,24 +63,105 @@ function createWindow() {
     // win.loadFile('dist/index.html')
     win.loadFile(path.join(RENDERER_DIST, 'index.html'))
   }
+
+  transferManager.setWindow(win)
 }
 
 // IPC Handlers
 ipcMain.handle('local:list', handleLocalList)
-ipcMain.handle('ssh:connect', (_, config) => sshHandler.connect(config))
-ipcMain.handle('ssh:list', (_, path) => sshHandler.list(path))
-ipcMain.handle('ssh:disconnect', () => sshHandler.disconnect())
-ipcMain.handle('ssh:get', (_, { remotePath, localPath }) => sshHandler.get(remotePath, localPath))
-ipcMain.handle('ssh:put', (_, { localPath, remotePath }) => sshHandler.put(localPath, remotePath))
-ipcMain.handle('ssh:shell-start', (event, { rows, cols }) => {
+ipcMain.handle('remote:connect', (_, config) => remoteDispatcher.connect(config))
+ipcMain.handle('remote:list', (_, path) => remoteDispatcher.list(path))
+ipcMain.handle('remote:disconnect', () => remoteDispatcher.disconnect())
+ipcMain.handle('remote:get', (_, { remotePath, localPath }) => remoteDispatcher.get(remotePath, localPath))
+ipcMain.handle('remote:put', (_, { localPath, remotePath }) => remoteDispatcher.put(localPath, remotePath))
+ipcMain.handle('remote:shell-start', (event, { rows, cols }) => {
+  if (remoteDispatcher.getActiveProtocol() !== 'sftp') {
+    throw new Error('Terminal only supported for SFTP')
+  }
   return sshHandler.spawnShell(rows, cols, (data) => {
-    event.sender.send('ssh:shell-data', data)
+    event.sender.send('remote:shell-data', data)
   })
 })
-ipcMain.handle('ssh:shell-write', (_, data) => sshHandler.writeShell(data))
-ipcMain.handle('ssh:shell-resize', (_, { rows, cols }) => sshHandler.resizeShell(rows, cols))
-ipcMain.handle('ssh:read-file', (_, remotePath) => sshHandler.readFile(remotePath))
-ipcMain.handle('ssh:write-file', (_, { remotePath, content }) => sshHandler.writeFile(remotePath, content))
+ipcMain.handle('remote:shell-write', (_, data) => sshHandler.writeShell(data))
+ipcMain.handle('remote:shell-resize', (_, { rows, cols }) => sshHandler.resizeShell(rows, cols))
+ipcMain.handle('remote:read-file', (_, remotePath) => remoteDispatcher.readFile(remotePath))
+ipcMain.handle('remote:write-file', (_, { remotePath, content }) => remoteDispatcher.writeFile(remotePath, content))
+
+ipcMain.handle('remote:edit-external', async (event, remotePath) => {
+  const fileName = path.basename(remotePath)
+  const tempDir = path.join(app.getPath('temp'), 'macscp-edit')
+  await fs.mkdir(tempDir, { recursive: true })
+  const localPath = path.join(tempDir, fileName)
+
+  // 1. Download content
+  const content = await remoteDispatcher.readFile(remotePath)
+  await fs.writeFile(localPath, content)
+
+  // 2. Open in external app
+  await shell.openPath(localPath)
+
+  // 3. Watch for changes
+  watch(localPath, async (eventType) => {
+    if (eventType === 'change') {
+      try {
+        const newContent = await fs.readFile(localPath, 'utf8')
+        await remoteDispatcher.writeFile(remotePath, newContent)
+        event.sender.send('remote:edit-status', { path: remotePath, status: 'uploaded' })
+      } catch (err) {
+        event.sender.send('remote:edit-status', { path: remotePath, status: 'error', error: String(err) })
+      }
+    }
+  })
+
+  // Cleanup watcher when app closes or after some time? 
+  // For now, let's keep it simple.
+  return { localPath }
+})
+
+ipcMain.handle('remote:start-drag', async (event, remotePath) => {
+  try {
+    const localPath = await remoteDispatcher.startDrag(remotePath)
+    // We need an icon. For now, we'll use a generic one or none (macOS will provide default).
+    // Actually startDrag requires an icon.
+    event.sender.startDrag({
+      file: localPath,
+      icon: path.join(__dirname, '../public/file-icon.png') // Fallback required
+    })
+  } catch (err) {
+    console.error('Failed to start native drag:', err)
+  }
+})
+
+ipcMain.handle('dialog:open-file', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [
+      { name: 'All Files', extensions: ['*'] },
+      { name: 'SSH Keys', extensions: ['key', 'pem', 'id_rsa', 'id_ed25519'] }
+    ]
+  })
+  if (result.canceled) return null
+  return result.filePaths[0]
+})
+
+// Transfer Handlers are setup in TransferManager
+transferManager.setupHandlers(app, ipcMain)
+
+ipcMain.handle('sync:compare', (_, { localDir, remoteDir }) => syncEngine.compare(localDir, remoteDir))
+
+fileWatcher.setupHandlers(ipcMain)
+
+ipcMain.handle('encryption:set', async (_, password) => {
+  await encryptionManager.setMasterPassword(password)
+  return true
+})
+ipcMain.handle('encryption:clear', () => {
+  encryptionManager.clear()
+  return true
+})
+ipcMain.handle('encryption:unlocked', () => {
+  return encryptionManager.isUnlocked()
+})
 
 setupSettingsHandlers(app, ipcMain)
 

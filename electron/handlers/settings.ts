@@ -2,6 +2,7 @@ import path from 'node:path'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import type { App, IpcMain } from 'electron'
+import { encryptionManager } from './encryption'
 
 let appInstance: App
 
@@ -22,7 +23,17 @@ export interface SSHProfile {
     host: string
     port: number
     username: string
-    password?: string // In real app, use safeStorage or Keychain
+    password?: string
+    privateKeyPath?: string
+    passphrase?: string
+    folder?: string
+    isFavorite?: boolean
+    protocol?: 'sftp' | 'ftp' | 'ftps' | 's3'
+    accessKeyId?: string
+    secretAccessKey?: string
+    region?: string
+    bucket?: string
+    endpoint?: string
 }
 
 export interface AppSettings {
@@ -43,7 +54,19 @@ async function getProfiles(): Promise<SSHProfile[]> {
     try {
         const { profilesPath } = getPaths()
         const data = await fs.readFile(profilesPath, 'utf-8')
-        return JSON.parse(data)
+        const profiles: SSHProfile[] = JSON.parse(data)
+
+        // Decrypt sensitive fields if encryption is unlocked
+        if (encryptionManager.isUnlocked()) {
+            return profiles.map(p => ({
+                ...p,
+                password: p.password ? encryptionManager.decrypt(p.password) : undefined,
+                passphrase: p.passphrase ? encryptionManager.decrypt(p.passphrase) : undefined,
+                secretAccessKey: p.secretAccessKey ? encryptionManager.decrypt(p.secretAccessKey) : undefined
+            }))
+        }
+
+        return profiles
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
             return []
@@ -54,16 +77,25 @@ async function getProfiles(): Promise<SSHProfile[]> {
 
 async function saveProfile(profile: SSHProfile) {
     const profiles = await getProfiles()
+
+    // Encrypt sensitive fields before saving if encryption is unlocked
+    const profileToSave = { ...profile }
+    if (encryptionManager.isUnlocked()) {
+        if (profileToSave.password) profileToSave.password = encryptionManager.encrypt(profileToSave.password)
+        if (profileToSave.passphrase) profileToSave.passphrase = encryptionManager.encrypt(profileToSave.passphrase)
+        if (profileToSave.secretAccessKey) profileToSave.secretAccessKey = encryptionManager.encrypt(profileToSave.secretAccessKey)
+    }
+
     const index = profiles.findIndex(p => p.id === profile.id)
 
     if (index >= 0) {
-        profiles[index] = profile
+        profiles[index] = profileToSave
     } else {
-        profiles.push(profile)
+        profiles.push(profileToSave)
     }
 
     await fs.writeFile(getPaths().profilesPath, JSON.stringify(profiles, null, 2))
-    return profiles
+    return await getProfiles() // Return decrypted list if possible
 }
 
 async function deleteProfile(id: string) {

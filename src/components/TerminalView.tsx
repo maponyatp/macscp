@@ -36,14 +36,14 @@ export function TerminalView() {
         fitAddonRef.current = fitAddon
 
         // Start shell
-        window.api.sshShellStart(term.rows, term.cols).catch(err => {
-            term.write('\r\n\x1b[31mFailed to start shell or not connected.\x1b[0m\r\n')
+        window.api.remoteShellStart(term.rows, term.cols).catch(err => {
+            term.write('\r\n\x1b[31m' + (err instanceof Error ? err.message : 'Failed to start shell or not connected.') + '\x1b[0m\r\n')
             console.error(err)
         })
 
         // Output to backend
         term.onData(data => {
-            window.api.sshShellWrite(data)
+            window.api.remoteShellWrite(data)
         })
 
         // Input from backend
@@ -54,7 +54,7 @@ export function TerminalView() {
         // Handle resize
         const handleResize = () => {
             fitAddon.fit()
-            window.api.sshShellResize(term.rows, term.cols)
+            window.api.remoteShellResize(term.rows, term.cols)
         }
 
         // Resize observer for container

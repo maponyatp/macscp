@@ -4,17 +4,21 @@ import { Toaster, toast } from 'sonner'
 import { ConnectionManager } from './components/ConnectionManager'
 import { FileExplorer } from './components/FileExplorer'
 import { SessionsView } from './components/SessionsView'
+import { TransferManager } from './components/TransferManager'
 
 import { TerminalView } from './components/TerminalView'
 import { SettingsView } from './components/SettingsView'
 import { AppSettings, defaultSettings } from './types'
+import { MasterPasswordModal } from './components/MasterPasswordModal'
 
 function App() {
   const [activeTab, setActiveTab] = useState<'manager' | 'sessions' | 'terminal' | 'settings'>('manager')
   const [isConnected, setIsConnected] = useState(false)
   const [settings, setSettings] = useState<AppSettings>(defaultSettings)
+  const [isUnlocked, setIsUnlocked] = useState(false)
 
   useEffect(() => {
+    window.api.encryptionUnlocked().then(setIsUnlocked)
     window.api.settingsGetAppSettings().then(setSettings)
   }, [])
 
@@ -32,6 +36,9 @@ function App() {
 
   return (
     <div className="h-screen w-screen overflow-hidden text-zinc-100 antialiased selection:bg-blue-500/30">
+      {!isUnlocked && (
+        <MasterPasswordModal onUnlock={() => setIsUnlocked(true)} />
+      )}
       <Shell activeTab={activeTab} onTabChange={setActiveTab}>
         {activeTab === 'manager' && !isConnected && (
           <ConnectionManager onConnect={() => setIsConnected(true)} />
@@ -48,8 +55,8 @@ function App() {
               <span className="text-green-500">Connected</span>
               <div className="flex-1" />
               <button
-                onClick={() => {
-                  window.api.sshDisconnect()
+                onClick={async () => {
+                  await window.api.remoteDisconnect()
                   setIsConnected(false)
                 }}
                 className="hover:text-red-400 transition-colors"
@@ -63,12 +70,13 @@ function App() {
           <SessionsView
             onConnect={async (profile) => {
               try {
-                await window.api.sshConnect({
+                await window.api.remoteConnect({
                   host: profile.host,
                   port: profile.port,
                   username: profile.username,
                   password: profile.password,
-                  privateKeyPath: profile.privateKeyPath // Ensure type supports this
+                  privateKeyPath: profile.privateKeyPath,
+                  protocol: profile.protocol || 'sftp'
                 })
                 setIsConnected(true)
                 setActiveTab('manager') // Switch to manager view to see files
@@ -87,6 +95,7 @@ function App() {
         )}
       </Shell>
       <Toaster position="bottom-right" theme="dark" />
+      <TransferManager />
     </div>
   )
 }

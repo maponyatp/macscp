@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Folder, File, ArrowLeft, RefreshCw, HardDrive, Server, type LucideIcon } from 'lucide-react'
+import { Folder, File, ArrowLeft, RefreshCw, HardDrive, Server, type LucideIcon, RefreshCcw, Eye, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { AppSettings, defaultSettings } from '../types'
 import { FileEditor } from './FileEditor'
+import { SyncDialog } from './SyncDialog'
 
 interface FileEntry {
     name: string
@@ -121,6 +122,26 @@ function FileList({
         setIsDraggingOver(false)
         if (!onDropFiles) return
 
+        // 1. Check for internal MacSCP drag
+        const internalPath = e.dataTransfer.getData('application/x-macscp-path')
+        const sourceType = e.dataTransfer.getData('application/x-macscp-source')
+
+        if (internalPath && sourceType) {
+            // Drag within the app
+            if (sourceType !== title) {
+                // Different pane, trigger transfer
+                const fileName = internalPath.split('/').pop() || ''
+                onTransfer?.({
+                    name: fileName,
+                    isDirectory: e.dataTransfer.getData('application/x-macscp-isdir') === 'true',
+                    size: parseInt(e.dataTransfer.getData('application/x-macscp-size') || '0'),
+                    updatedAt: new Date()
+                })
+            }
+            return
+        }
+
+        // 2. Fallback to external files (Finder)
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             onDropFiles(e.dataTransfer.files)
         }
@@ -183,11 +204,35 @@ function FileList({
                 {error ? (
                     <div className="text-red-400 text-xs p-2 text-center">{error}</div>
                 ) : (
-                    <div className="space-y-0.5">
+                    <div className="space-y-0.5" onDragStart={(e) => {
+                        const target = e.target as HTMLElement
+                        const fileName = target.getAttribute('data-filename')
+                        const isDirectory = target.getAttribute('data-isdir') === 'true'
+                        const size = target.getAttribute('data-size')
+
+                        if (!fileName) return
+
+                        const fullPath = path === '/' ? `/${fileName}` : `${path}/${fileName}`
+
+                        // 1. Internal drag data for pane-to-pane transfers
+                        e.dataTransfer.setData('application/x-macscp-path', fullPath)
+                        e.dataTransfer.setData('application/x-macscp-source', title)
+                        e.dataTransfer.setData('application/x-macscp-isdir', isDirectory.toString())
+                        e.dataTransfer.setData('application/x-macscp-size', size || '0')
+
+                        // 2. Native macOS drag (Remote -> Finder)
+                        if (title === 'Remote' && !isDirectory) {
+                            window.api.remoteStartDrag(fullPath)
+                        }
+                    }}>
                         {files.map((file) => (
                             <div
                                 key={file.name}
                                 onContextMenu={(e) => onContextMenu?.(e, file)}
+                                draggable={true}
+                                data-filename={file.name}
+                                data-isdir={file.isDirectory}
+                                data-size={file.size}
                                 className={`
                             group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer select-none text-sm
                             ${file.isDirectory ? 'text-blue-100 hover:bg-blue-500/20' : 'text-zinc-300 hover:bg-zinc-700/50'}
@@ -205,21 +250,22 @@ function FileList({
                                     <span className="truncate">{file.name}</span>
                                 </div>
 
-                                {!file.isDirectory && onTransfer && (
+                                {onTransfer && (
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation()
                                             onTransfer(file)
                                         }}
-                                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-600 rounded text-xs px-2 bg-zinc-700 text-zinc-300"
-                                        title={title === 'Local' ? 'Upload' : 'Download'}
+                                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-600 rounded text-xs px-2 bg-zinc-700 text-zinc-300 flex items-center gap-1"
+                                        title={title === 'Local' ? 'Upload Folder' : 'Download Folder'}
                                     >
+                                        {file.isDirectory && <Folder className="h-3 w-3" />}
                                         {title === 'Local' ? 'Upload' : 'Download'}
                                     </button>
                                 )}
 
                                 <span className="text-xs text-zinc-600 font-mono w-16 text-right">
-                                    {!file.isDirectory && (file.size / 1024).toFixed(1) + ' KB'}
+                                    {file.isDirectory ? 'DIR' : (file.size / 1024).toFixed(1) + ' KB'}
                                 </span>
                             </div>
                         ))}
@@ -236,10 +282,46 @@ function FileList({
 export function FileExplorer({ settings = defaultSettings }: { settings?: AppSettings }) {
     const [localPath, setLocalPath] = useState(settings.defaultLocalPath || '/')
     const [remotePath, setRemotePath] = useState('/root') // Default for VPS, configurable
-    const [transferring, setTransferring] = useState(false)
-    const [refreshTrigger, setRefreshTrigger] = useState(0)
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, file: FileEntry } | null>(null)
     const [editingFile, setEditingFile] = useState<string | null>(null)
+    const [showSync, setShowSync] = useState(false)
+    const [isWatching, setIsWatching] = useState(false)
+
+    const checkWatchStatus = useCallback(async () => {
+        const active = await window.api.watcherActive(localPath)
+        setIsWatching(active)
+    }, [localPath])
+
+    useEffect(() => {
+        checkWatchStatus()
+    }, [checkWatchStatus])
+
+    useEffect(() => {
+        const cleanup = window.api.onRemoteEditStatus((data) => {
+            if (data.status === 'uploaded') {
+                toast.success(`Automatically uploaded: ${data.path.split('/').pop()}`, {
+                    description: 'Changes detected and synced'
+                })
+            } else if (data.status === 'error') {
+                toast.error(`Auto-upload failed for ${data.path.split('/').pop()}`, {
+                    description: data.error
+                })
+            }
+        })
+        return cleanup
+    }, [])
+
+    async function toggleWatch() {
+        if (isWatching) {
+            await window.api.watcherStop(localPath)
+            setIsWatching(false)
+            toast.info('Stopped watching for changes')
+        } else {
+            await window.api.watcherStart(localPath, remotePath)
+            setIsWatching(true)
+            toast.success('Scanning and watching local changes...')
+        }
+    }
 
     // Close context menu on global click
     useEffect(() => {
@@ -258,76 +340,62 @@ export function FileExplorer({ settings = defaultSettings }: { settings?: AppSet
     }, [settings.defaultLocalPath])
 
     async function handleUpload(file: FileEntry) {
-        if (transferring) return
-        setTransferring(true)
-        const toastId = toast.loading(`Uploading ${file.name}...`)
+        const localFilePath = localPath === '/' ? `/${file.name}` : `${localPath}/${file.name}`
+        const remoteFilePath = remotePath === '/' ? `/${file.name}` : `${remotePath}/${file.name}`
+
         try {
-            await window.api.sshPut(
-                localPath === '/' ? `/${file.name}` : `${localPath}/${file.name}`,
-                remotePath === '/' ? `/${file.name}` : `${remotePath}/${file.name}`
-            )
-            toast.success('Upload complete', { id: toastId })
-            setRefreshTrigger(p => p + 1)
+            await window.api.transferAdd({
+                type: 'upload',
+                localPath: localFilePath,
+                remotePath: remoteFilePath,
+                fileName: file.name,
+                totalSize: file.size
+            })
+            toast.info(`Queued upload: ${file.name}`)
         } catch (err) {
-            const message = err instanceof Error ? err.message : 'Unknown error'
-            toast.error('Upload failed: ' + message, { id: toastId })
-        } finally {
-            setTransferring(false)
+            toast.error('Failed to queue upload')
         }
     }
 
     async function handleDownload(file: FileEntry) {
-        if (transferring) return
-        setTransferring(true)
-        const toastId = toast.loading(`Downloading ${file.name}...`)
+        const localFilePath = localPath === '/' ? `/${file.name}` : `${localPath}/${file.name}`
+        const remoteFilePath = remotePath === '/' ? `/${file.name}` : `${remotePath}/${file.name}`
+
         try {
-            await window.api.sshGet(
-                remotePath === '/' ? `/${file.name}` : `${remotePath}/${file.name}`,
-                localPath === '/' ? `/${file.name}` : `${localPath}/${file.name}`
-            )
-            toast.success('Download complete', { id: toastId })
-            setRefreshTrigger(p => p + 1)
+            await window.api.transferAdd({
+                type: 'download',
+                localPath: localFilePath,
+                remotePath: remoteFilePath,
+                fileName: file.name,
+                totalSize: file.size
+            })
+            toast.info(`Queued download: ${file.name}`)
         } catch (err) {
-            const message = err instanceof Error ? err.message : 'Unknown error'
-            toast.error('Download failed: ' + message, { id: toastId })
-        } finally {
-            setTransferring(false)
+            toast.error('Failed to queue download')
         }
     }
 
     async function handleRemoteDrop(files: FileList) {
-        if (transferring) return
-        setTransferring(true)
-        const toastId = toast.loading(`Uploading ${files.length} file(s)...`)
-        try {
-            let successCount = 0
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i]
-                // Electron provides the full path in the File object
-                const localFilePath = (file as ElectronFile).path
-                if (!localFilePath) {
-                    console.error('No path found for dropped file:', file.name)
-                    continue
-                }
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i]
+            const localFilePath = (file as ElectronFile).path
+            if (!localFilePath) continue
 
-                await window.api.sshPut(
-                    localFilePath,
-                    remotePath === '/' ? `/${file.name}` : `${remotePath}/${file.name}`
-                )
-                successCount++
+            const remoteFilePath = remotePath === '/' ? `/${file.name}` : `${remotePath}/${file.name}`
+
+            try {
+                await window.api.transferAdd({
+                    type: 'upload',
+                    localPath: localFilePath,
+                    remotePath: remoteFilePath,
+                    fileName: file.name,
+                    totalSize: file.size
+                })
+            } catch (err) {
+                console.error('Failed to queue drop upload:', file.name)
             }
-            if (successCount > 0) {
-                toast.success(`Uploaded ${successCount} file(s)`, { id: toastId })
-                setRefreshTrigger(p => p + 1)
-            } else {
-                toast.dismiss(toastId)
-            }
-        } catch (err) {
-            const message = err instanceof Error ? err.message : 'Unknown error'
-            toast.error('Upload failed: ' + message, { id: toastId })
-        } finally {
-            setTransferring(false)
         }
+        toast.info(`Queued ${files.length} file(s) for upload`)
     }
 
     return (
@@ -341,7 +409,6 @@ export function FileExplorer({ settings = defaultSettings }: { settings?: AppSet
                     loadFiles={(p) => window.api.localList(p)}
                     onTransfer={handleUpload}
                     showHiddenFiles={settings.showHiddenFiles}
-                    refreshTrigger={refreshTrigger}
                 />
             </div>
             <div className="flex-1 min-w-0">
@@ -350,11 +417,10 @@ export function FileExplorer({ settings = defaultSettings }: { settings?: AppSet
                     icon={Server}
                     path={remotePath}
                     onPathChange={setRemotePath}
-                    loadFiles={(p) => window.api.sshList(p)}
+                    loadFiles={(p) => window.api.remoteList(p)}
                     onTransfer={handleDownload}
                     onDropFiles={handleRemoteDrop}
                     showHiddenFiles={settings.showHiddenFiles}
-                    refreshTrigger={refreshTrigger}
                     onContextMenu={(e, file) => {
                         e.preventDefault()
                         setContextMenu({ x: e.clientX, y: e.clientY, file })
@@ -388,6 +454,27 @@ export function FileExplorer({ settings = defaultSettings }: { settings?: AppSet
                         </button>
                     )}
 
+                    {!contextMenu.file.isDirectory && (
+                        <button
+                            className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700 hover:text-white transition-colors flex items-center gap-2"
+                            onClick={async () => {
+                                const fullPath = remotePath === '/'
+                                    ? `/${contextMenu.file.name}`
+                                    : `${remotePath}/${contextMenu.file.name}`
+                                try {
+                                    setContextMenu(null)
+                                    toast.loading(`Opening ${contextMenu.file.name}...`, { id: 'edit-external' })
+                                    await window.api.remoteEditExternal(fullPath)
+                                    toast.success('App launched. MacSCP will watch for changes.', { id: 'edit-external' })
+                                } catch (err) {
+                                    toast.error(`Failed to launch editor: ${err}`, { id: 'edit-external' })
+                                }
+                            }}
+                        >
+                            Edit with...
+                        </button>
+                    )}
+
                     <button
                         className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700 hover:text-white transition-colors"
                         onClick={() => {
@@ -405,16 +492,52 @@ export function FileExplorer({ settings = defaultSettings }: { settings?: AppSet
                 <FileEditor
                     remotePath={editingFile}
                     onClose={() => setEditingFile(null)}
+                    onOpenExternal={async () => {
+                        const path = editingFile
+                        setEditingFile(null)
+                        try {
+                            toast.loading(`Opening ${path.split('/').pop()}...`, { id: 'edit-external' })
+                            await window.api.remoteEditExternal(path)
+                            toast.success('App launched. MacSCP will watch for changes.', { id: 'edit-external' })
+                        } catch (err) {
+                            toast.error(`Failed to launch editor: ${err}`, { id: 'edit-external' })
+                        }
+                    }}
                 />
             )}
 
-            {transferring && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-zinc-800 p-4 rounded-xl border border-zinc-700 flex items-center gap-3">
-                        <RefreshCw className="h-5 w-5 animate-spin text-blue-500" />
-                        <span>Transferring...</span>
+            <button
+                onClick={toggleWatch}
+                className={`fixed bottom-40 right-6 w-12 h-12 rounded-full shadow-2xl flex items-center justify-center border transition-all hover:scale-110 group z-40 ${isWatching ? 'bg-green-600 border-green-500 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}
+                title={isWatching ? 'Stop Watching (Keep Remote Up-to-Date)' : 'Keep Remote Up-to-Date'}
+            >
+                {isWatching ? (
+                    <div className="relative">
+                        <Eye className="h-5 w-5" />
+                        <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                        </span>
                     </div>
-                </div>
+                ) : (
+                    <EyeOff className="h-5 w-5" />
+                )}
+            </button>
+
+            <button
+                onClick={() => setShowSync(true)}
+                className="fixed bottom-24 right-6 bg-zinc-800 hover:bg-zinc-700 text-white w-12 h-12 rounded-full shadow-2xl flex items-center justify-center border border-zinc-700 transition-all hover:scale-110 group z-40"
+                title="Synchronize Directories"
+            >
+                <RefreshCcw className="h-5 w-5 text-blue-400 group-hover:rotate-180 transition-transform duration-500" />
+            </button>
+
+            {showSync && (
+                <SyncDialog
+                    localDir={localPath}
+                    remoteDir={remotePath}
+                    onClose={() => setShowSync(false)}
+                />
             )}
         </div>
     )
