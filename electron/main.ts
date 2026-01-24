@@ -122,7 +122,7 @@ ipcMain.handle('remote:edit-external', async (event, remotePath) => {
 
   // 3. Watch for changes
   let isUploading = false
-  const watcher = watch(localPath, async (eventType) => {
+  watch(localPath, async (eventType) => {
     if (eventType === 'change' && !isUploading) {
       isUploading = true
       try {
