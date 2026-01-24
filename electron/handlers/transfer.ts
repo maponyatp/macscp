@@ -69,6 +69,11 @@ export class TransferManager {
         }
     }
 
+    /**
+     * Adds a new task to the transfer queue.
+     * MacSCP follows a "Forced Overwrite" policy: any existing files at the destination
+     * will be overwritten without prompting the user, as per core design.
+     */
     addTask(task: Omit<TransferTask, 'id' | 'status' | 'progress' | 'transferredSize' | 'speed'>) {
         const newTask: TransferTask = {
             ...task,
@@ -95,17 +100,24 @@ export class TransferManager {
     private async processQueue() {
         if (this.activeTasks >= this.maxConcurrent) return
 
-        const nextTask = this.queue.find(t => t.status === 'pending' || t.status === 'interrupted')
-        if (!nextTask) return
+        // Spawn multiple tasks up to the limit
+        while (this.activeTasks < this.maxConcurrent) {
+            const nextTask = this.queue.find(t => t.status === 'pending' || t.status === 'interrupted')
+            if (!nextTask) break
 
+            this.runTask(nextTask)
+        }
+    }
+
+    private async runTask(task: TransferTask) {
         this.activeTasks++
-        const oldStatus = nextTask.status
-        nextTask.status = 'active'
+        const oldStatus = task.status
+        task.status = 'active'
         this.emitQueue()
 
         try {
             const startTime = Date.now()
-            const startOffset = oldStatus === 'interrupted' ? nextTask.transferredSize : 0
+            const startOffset = oldStatus === 'interrupted' ? task.transferredSize : 0
             let lastTransferred = startOffset
             let lastTime = startTime
 
@@ -113,16 +125,16 @@ export class TransferManager {
                 const now = Date.now()
                 const elapsed = now - lastTime
 
-                nextTask.transferredSize = totalTransferred
-                if (totalSize > 0) nextTask.totalSize = totalSize
+                task.transferredSize = totalTransferred
+                if (totalSize > 0) task.totalSize = totalSize
 
-                if (nextTask.totalSize) {
-                    nextTask.progress = Math.round((totalTransferred / nextTask.totalSize) * 100)
+                if (task.totalSize) {
+                    task.progress = Math.round((totalTransferred / task.totalSize) * 100)
                 }
 
                 if (elapsed > 500) {
                     const bytesSinceLast = totalTransferred - lastTransferred
-                    nextTask.speed = (bytesSinceLast / elapsed) * 1000
+                    task.speed = (bytesSinceLast / elapsed) * 1000
                     lastTransferred = totalTransferred
                     lastTime = now
                     this.emitQueue()
@@ -130,28 +142,30 @@ export class TransferManager {
                 }
             }
 
-            if (nextTask.type === 'download') {
-                await remoteDispatcher.getWithProgress(nextTask.remotePath, nextTask.localPath, onProgress, startOffset)
+            if (task.type === 'download') {
+                await remoteDispatcher.getWithProgress(task.remotePath, task.localPath, onProgress, startOffset)
             } else {
-                await remoteDispatcher.putWithProgress(nextTask.localPath, nextTask.remotePath, onProgress, startOffset)
+                await remoteDispatcher.putWithProgress(task.localPath, task.remotePath, onProgress, startOffset)
             }
 
-            nextTask.status = 'completed'
-            nextTask.progress = 100
-            nextTask.retryCount = 0
+            task.status = 'completed'
+            task.progress = 100
+            task.retryCount = 0
+            task.speed = 0
         } catch (err) {
-            console.error('Transfer failed:', err)
+            console.error(`Transfer failed for task ${task.id}:`, err)
 
             const maxRetries = 3
-            nextTask.retryCount = (nextTask.retryCount || 0) + 1
+            task.retryCount = (task.retryCount || 0) + 1
 
-            if (nextTask.retryCount <= maxRetries) {
-                nextTask.status = 'pending' // Re-queue
-                nextTask.error = `Retry ${nextTask.retryCount}/${maxRetries}: ${err instanceof Error ? err.message : String(err)}`
-                console.log(`Auto-retrying task ${nextTask.id} (${nextTask.retryCount}/${maxRetries})`)
+            if (task.retryCount <= maxRetries) {
+                task.status = 'pending' // Re-queue
+                task.error = `Retry ${task.retryCount}/${maxRetries}: ${err instanceof Error ? err.message : String(err)}`
+                console.log(`Auto-retrying task ${task.id} (${task.retryCount}/${maxRetries})`)
             } else {
-                nextTask.status = 'failed'
-                nextTask.error = err instanceof Error ? err.message : String(err)
+                task.status = 'failed'
+                task.error = err instanceof Error ? err.message : String(err)
+                task.speed = 0
             }
         } finally {
             this.activeTasks--

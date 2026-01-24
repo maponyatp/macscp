@@ -121,14 +121,20 @@ ipcMain.handle('remote:edit-external', async (event, remotePath) => {
   await shell.openPath(localPath)
 
   // 3. Watch for changes
-  watch(localPath, async (eventType) => {
-    if (eventType === 'change') {
+  let isUploading = false
+  const watcher = watch(localPath, async (eventType) => {
+    if (eventType === 'change' && !isUploading) {
+      isUploading = true
       try {
+        // Debounce slightly to ensure file handle is released
+        await new Promise(resolve => setTimeout(resolve, 100))
         const newContent = await fs.readFile(localPath, 'utf8')
         await remoteDispatcher.writeFile(remotePath, newContent)
         event.sender.send('remote:edit-status', { path: remotePath, status: 'uploaded' })
       } catch (err) {
         event.sender.send('remote:edit-status', { path: remotePath, status: 'error', error: String(err) })
+      } finally {
+        isUploading = false
       }
     }
   })

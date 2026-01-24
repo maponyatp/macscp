@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Folder, File, ArrowLeft, RefreshCw, HardDrive, Server, type LucideIcon, RefreshCcw, Eye, EyeOff } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Folder, File, ArrowLeft, RefreshCw, HardDrive, Server, type LucideIcon, RefreshCcw, Eye, EyeOff, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { AppSettings, defaultSettings } from '../types'
 import { FileEditor } from './FileEditor'
@@ -46,10 +46,12 @@ function FileList({
     const [error, setError] = useState<string | null>(null)
     const [isDraggingOver, setIsDraggingOver] = useState(false)
     const [pathInput, setPathInput] = useState(path)
+    const [searchQuery, setSearchQuery] = useState('')
 
     // Sync pathInput when path changes externally (e.g., clicking folders)
     useEffect(() => {
         setPathInput(path)
+        setSearchQuery('') // Clear search when changing directories
     }, [path])
 
     const refresh = useCallback(async () => {
@@ -79,6 +81,13 @@ function FileList({
     useEffect(() => {
         refresh()
     }, [refresh, refreshTrigger])
+
+    // Filtered files based on search query
+    const filteredFiles = useMemo(() => {
+        if (!searchQuery.trim()) return files
+        const query = searchQuery.toLowerCase()
+        return files.filter(f => f.name.toLowerCase().includes(query))
+    }, [files, searchQuery])
 
     function handleNavigate(entry: FileEntry) {
         if (entry.isDirectory) {
@@ -158,11 +167,32 @@ function FileList({
             onDrop={handleDrop}
         >
             {/* Header */}
-            <div className="bg-zinc-900/50 p-3 border-b border-zinc-700 flex flex-col gap-2">
-                <div className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
-                    <Icon className="h-4 w-4" />
-                    {title}
+            <div className="bg-zinc-900/50 p-3 border-b border-zinc-700 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                        <Icon className="h-4 w-4" />
+                        {title}
+                    </div>
+                    {/* Compact Search Bar in Header */}
+                    <div className="flex-1 max-w-[180px] relative group px-2">
+                        <Search className={`absolute left-4 top-1/2 -translate-y-1/2 h-3 w-3 transition-colors ${searchQuery ? 'text-blue-400' : 'text-zinc-500 group-focus-within:text-blue-400'}`} />
+                        <input
+                            className="w-full bg-zinc-950/50 border border-zinc-700/50 rounded-md pl-7 pr-7 py-1 text-[11px] placeholder:text-zinc-600 focus:border-blue-500/50 focus:outline-none transition-all"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder="Filter files..."
+                        />
+                        {searchQuery && (
+                            <button
+                                onClick={() => setSearchQuery('')}
+                                className="absolute right-4 top-1/2 -translate-y-1/2 p-0.5 hover:bg-zinc-700 rounded text-zinc-500 hover:text-white"
+                            >
+                                <X className="h-3 w-3" />
+                            </button>
+                        )}
+                    </div>
                 </div>
+
                 <div className="flex gap-2">
                     <button
                         onClick={handleUp}
@@ -225,7 +255,7 @@ function FileList({
                             window.api.remoteStartDrag(fullPath)
                         }
                     }}>
-                        {files.map((file) => (
+                        {filteredFiles.map((file) => (
                             <div
                                 key={file.name}
                                 onContextMenu={(e) => onContextMenu?.(e, file)}
@@ -234,7 +264,7 @@ function FileList({
                                 data-isdir={file.isDirectory}
                                 data-size={file.size}
                                 className={`
-                            group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer select-none text-sm
+                            group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer select-none text-sm animate-in fade-in duration-200
                             ${file.isDirectory ? 'text-blue-100 hover:bg-blue-500/20' : 'text-zinc-300 hover:bg-zinc-700/50'}
                         `}
                             >
@@ -269,8 +299,17 @@ function FileList({
                                 </span>
                             </div>
                         ))}
-                        {files.length === 0 && !loading && (
-                            <div className="text-zinc-500 text-xs text-center py-4">Empty folder</div>
+                        {filteredFiles.length === 0 && !loading && (
+                            <div className="text-zinc-500 text-xs text-center py-4 flex flex-col gap-2 items-center">
+                                {searchQuery ? (
+                                    <>
+                                        <span>No matches found for "{searchQuery}"</span>
+                                        <button onClick={() => setSearchQuery('')} className="text-blue-400 hover:underline">Clear filter</button>
+                                    </>
+                                ) : (
+                                    <span>Empty folder</span>
+                                )}
+                            </div>
                         )}
                     </div>
                 )}
