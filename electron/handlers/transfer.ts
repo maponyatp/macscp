@@ -8,6 +8,7 @@ export class TransferManager {
     private queue: TransferTask[] = []
     private activeTasks = 0
     private maxConcurrent = 3
+    private activeControllers = new Map<string, AbortController>()
     private win: BrowserWindow | null = null
     private app: App | null = null
 
@@ -142,10 +143,13 @@ export class TransferManager {
                 }
             }
 
+            const controller = new AbortController()
+            this.activeControllers.set(task.id, controller)
+
             if (task.type === 'download') {
-                await remoteDispatcher.getWithProgress(task.remotePath, task.localPath, onProgress, startOffset)
+                await remoteDispatcher.getWithProgress(task.remotePath, task.localPath, onProgress, startOffset, controller.signal)
             } else {
-                await remoteDispatcher.putWithProgress(task.localPath, task.remotePath, onProgress, startOffset)
+                await remoteDispatcher.putWithProgress(task.localPath, task.remotePath, onProgress, startOffset, controller.signal)
             }
 
             task.status = 'completed'
@@ -168,6 +172,7 @@ export class TransferManager {
                 task.speed = 0
             }
         } finally {
+            this.activeControllers.delete(task.id)
             this.activeTasks--
             this.saveQueue()
             this.emitQueue()
@@ -189,6 +194,11 @@ export class TransferManager {
         const task = this.queue.find(t => t.id === id)
         if (task) {
             task.status = 'cancelled'
+            const controller = this.activeControllers.get(id)
+            if (controller) {
+                controller.abort()
+                this.activeControllers.delete(id)
+            }
             this.saveQueue()
             this.emitQueue()
         }

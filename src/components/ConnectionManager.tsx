@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { SSHProfile } from '../types'
 
 interface ConnectionManagerProps {
-    onConnect: () => void
+    onConnect: (config: Partial<SSHProfile>) => void
 }
 
 export function ConnectionManager({ onConnect }: ConnectionManagerProps) {
@@ -196,7 +196,7 @@ export function ConnectionManager({ onConnect }: ConnectionManagerProps) {
             }
 
             await window.api.remoteConnect(connectPayload)
-            onConnect()
+            onConnect(connectPayload)
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to connect'
             setError(message)

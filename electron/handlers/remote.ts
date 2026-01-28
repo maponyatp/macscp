@@ -17,7 +17,7 @@ export class RemoteDispatcher {
         throw new Error('No active remote connection')
     }
 
-    async connect(config: SSHProfile) {
+    async connect(config: Partial<SSHProfile>) {
         // Disconnect existing if different protocol? 
         // Or just always disconnect for simplicity.
         this.disconnect()
@@ -38,12 +38,12 @@ export class RemoteDispatcher {
         return this.handler.list(path)
     }
 
-    async get(remotePath: string, localPath: string) {
-        return this.handler.get(remotePath, localPath)
+    async get(remotePath: string, localPath: string, signal?: AbortSignal) {
+        return this.handler.get(remotePath, localPath, signal)
     }
 
-    async put(localPath: string, remotePath: string) {
-        return this.handler.put(localPath, remotePath)
+    async put(localPath: string, remotePath: string, signal?: AbortSignal) {
+        return this.handler.put(localPath, remotePath, signal)
     }
 
     async stat(remotePath: string) {
@@ -58,12 +58,12 @@ export class RemoteDispatcher {
         return this.handler.writeFile(remotePath, content)
     }
 
-    async getWithProgress(remotePath: string, localPath: string, onProgress: (totalTransferred: number, chunk: number, totalSize: number) => void, offset?: number) {
-        return this.handler.getWithProgress(remotePath, localPath, onProgress, offset)
+    async getWithProgress(remotePath: string, localPath: string, onProgress: (totalTransferred: number, chunk: number, totalSize: number) => void, offset?: number, signal?: AbortSignal) {
+        return this.handler.getWithProgress(remotePath, localPath, onProgress, offset, signal)
     }
 
-    async putWithProgress(localPath: string, remotePath: string, onProgress: (totalTransferred: number, chunk: number, totalSize: number) => void, offset?: number) {
-        return this.handler.putWithProgress(localPath, remotePath, onProgress, offset)
+    async putWithProgress(localPath: string, remotePath: string, onProgress: (totalTransferred: number, chunk: number, totalSize: number) => void, offset?: number, signal?: AbortSignal) {
+        return this.handler.putWithProgress(localPath, remotePath, onProgress, offset, signal)
     }
 
     async startDrag(remotePath: string): Promise<string> {

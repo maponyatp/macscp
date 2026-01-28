@@ -17,31 +17,7 @@ function getPaths() {
     }
 }
 
-export interface SSHProfile {
-    id: string
-    name: string
-    host: string
-    port: number
-    username: string
-    password?: string
-    privateKeyPath?: string
-    passphrase?: string
-    folder?: string
-    isFavorite?: boolean
-    protocol?: 'sftp' | 'ftp' | 'ftps' | 's3'
-    accessKeyId?: string
-    secretAccessKey?: string
-    region?: string
-    bucket?: string
-    endpoint?: string
-}
-
-export interface AppSettings {
-    theme: 'system' | 'dark' | 'light'
-    showHiddenFiles: boolean
-    defaultLocalPath: string
-    confirmOnDelete: boolean
-}
+import { SSHProfile, AppSettings } from '../../src/types'
 
 const defaultSettings: AppSettings = {
     theme: 'system',

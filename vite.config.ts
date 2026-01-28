@@ -13,13 +13,7 @@ export default defineConfig({
         vite: {
           build: {
             rollupOptions: {
-              external: (id) => {
-                // Explicitly externalize electron and other native modules
-                if (id === 'electron' || id.startsWith('electron/')) return true
-                if (id === 'ssh2' || id.startsWith('ssh2/')) return true
-                if (id.startsWith('node:')) return true
-                return false
-              },
+              external: ['electron', 'ssh2', 'node:url', 'node:fs/promises', 'node:fs', 'node:path', 'node:os'],
             },
           },
         },

@@ -6,32 +6,49 @@ import { FileEntry, SSHProfile } from '../../src/types'
 
 
 export class FTPHandler {
-    private client: ftp.Client | null = null
+    private client: ftp.Client | null = null // For metadata (shared)
+    private config: Partial<SSHProfile> | null = null
 
-    async connect(config: Partial<SSHProfile>) {
-        if (this.client) {
-            this.disconnect()
+    private async getClient(signal?: AbortSignal): Promise<ftp.Client> {
+        if (!this.config) throw new Error('Not connected')
+        const client = new ftp.Client()
+
+        const onAbort = () => {
+            client.close()
         }
-
-        this.client = new ftp.Client()
-        // this.client.ftp.log = console.log // Debugging
+        if (signal?.aborted) {
+            client.close()
+            throw new Error('Aborted')
+        }
+        signal?.addEventListener('abort', onAbort)
 
         try {
-            await this.client.access({
-                host: config.host,
-                port: config.port || 21,
-                user: config.username,
-                password: config.password,
-                secure: config.protocol === 'ftps' || config.protocol === 'ftps-implicit',
+            await client.access({
+                host: this.config.host,
+                port: this.config.port || 21,
+                user: this.config.username,
+                password: this.config.password,
+                secure: this.config.protocol === 'ftps' || this.config.protocol === 'ftps-implicit',
                 secureOptions: {
                     rejectUnauthorized: false
                 }
             })
-            return { status: 'connected' }
+            return client
         } catch (err) {
-            this.client = null
+            client.close()
             throw err
+        } finally {
+            signal?.removeEventListener('abort', onAbort)
         }
+    }
+
+    async connect(config: Partial<SSHProfile>): Promise<{ status: string }> {
+        this.config = config
+        if (this.client) {
+            this.disconnect()
+        }
+        this.client = await this.getClient()
+        return { status: 'connected' }
     }
 
     async list(remotePath: string): Promise<FileEntry[]> {
@@ -57,53 +74,88 @@ export class FTPHandler {
         }
     }
 
-    async get(remotePath: string, localPath: string) {
-        if (!this.client) throw new Error('Not connected')
-        await this.client.downloadTo(localPath, remotePath)
-        return true
+    async get(remotePath: string, localPath: string, signal?: AbortSignal) {
+        const client = await this.getClient(signal)
+        try {
+            await client.downloadTo(localPath, remotePath)
+            return true
+        } finally {
+            client.close()
+        }
     }
 
-    async getWithProgress(remotePath: string, localPath: string, onProgress: (totalTransferred: number, chunk: number, totalSize: number) => void, offset: number = 0) {
-        if (!this.client) throw new Error('Not connected')
-
+    async getWithProgress(
+        remotePath: string,
+        localPath: string,
+        onProgress: (totalTransferred: number, chunk: number, totalSize: number) => void,
+        offset: number = 0,
+        signal?: AbortSignal
+    ) {
+        const client = await this.getClient(signal)
         let lastTransferred = 0
-        this.client.trackProgress(info => {
+        client.trackProgress((info) => {
             const chunk = info.bytes - lastTransferred
             lastTransferred = info.bytes
             onProgress(info.bytes + offset, chunk, 0)
         })
 
-        try {
-            await this.client.downloadTo(localPath, remotePath, offset)
-        } finally {
-            this.client.trackProgress()
+        const onAbort = () => {
+            client.close()
         }
-        return true
+        signal?.addEventListener('abort', onAbort)
+
+        try {
+            await client.downloadTo(localPath, remotePath, offset)
+            return true
+        } finally {
+            signal?.removeEventListener('abort', onAbort)
+            client.trackProgress()
+            client.close()
+        }
     }
 
-    async put(localPath: string, remotePath: string) {
-        if (!this.client) throw new Error('Not connected')
-        await this.client.uploadFrom(localPath, remotePath)
-        return true
+    async put(localPath: string, remotePath: string, signal?: AbortSignal) {
+        const client = await this.getClient(signal)
+        try {
+            await client.uploadFrom(localPath, remotePath)
+            return true
+        } finally {
+            client.close()
+        }
     }
 
-    async putWithProgress(localPath: string, remotePath: string, onProgress: (totalTransferred: number, chunk: number, totalSize: number) => void, offset: number = 0) {
-        if (!this.client) throw new Error('Not connected')
-
+    async putWithProgress(
+        localPath: string,
+        remotePath: string,
+        onProgress: (totalTransferred: number, chunk: number, totalSize: number) => void,
+        offset: number = 0,
+        signal?: AbortSignal
+    ) {
+        const client = await this.getClient(signal)
         let lastTransferred = 0
-        this.client.trackProgress(info => {
+        client.trackProgress((info) => {
             const chunk = info.bytes - lastTransferred
             lastTransferred = info.bytes
             onProgress(info.bytes + offset, chunk, 0)
         })
 
-        try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await this.client.uploadFrom(localPath, remotePath, { remoteStartPos: offset } as any)
-        } finally {
-            this.client.trackProgress()
+        const onAbort = () => {
+            client.close()
         }
-        return true
+        signal?.addEventListener('abort', onAbort)
+
+        try {
+            if (offset > 0) {
+                await client.appendFrom(localPath, remotePath, { localStart: offset })
+            } else {
+                await client.uploadFrom(localPath, remotePath)
+            }
+            return true
+        } finally {
+            signal?.removeEventListener('abort', onAbort)
+            client.trackProgress()
+            client.close()
+        }
     }
 
     async readFile(remotePath: string): Promise<string> {
@@ -128,6 +180,7 @@ export class FTPHandler {
             this.client.close()
             this.client = null
         }
+        this.config = null
     }
 }
 

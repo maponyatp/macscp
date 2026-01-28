@@ -110,7 +110,7 @@ export class S3Handler {
         }
     }
 
-    async get(remotePath: string, localPath: string) {
+    async get(remotePath: string, localPath: string, signal?: AbortSignal) {
         if (!this.client || !this.bucket) throw new Error('Not connected')
         const key = remotePath.startsWith('/') ? remotePath.slice(1) : remotePath
         const response = await this.client.send(new GetObjectCommand({
@@ -120,15 +120,28 @@ export class S3Handler {
         if (!response.Body) throw new Error('Empty body')
         const body = response.Body as Readable
         const writer = createWriteStream(localPath)
+
+        const onAbort = () => {
+            body.destroy()
+            writer.destroy()
+        }
+        if (signal?.aborted) {
+            onAbort()
+            throw new Error('Aborted')
+        }
+        signal?.addEventListener('abort', onAbort)
+
         return new Promise((resolve, reject) => {
             body.pipe(writer)
             writer.on('finish', () => resolve(true))
             writer.on('error', reject)
             body.on('error', reject)
+        }).finally(() => {
+            signal?.removeEventListener('abort', onAbort)
         })
     }
 
-    async put(localPath: string, remotePath: string) {
+    async put(localPath: string, remotePath: string, signal?: AbortSignal) {
         if (!this.client || !this.bucket) throw new Error('Not connected')
         const key = remotePath.startsWith('/') ? remotePath.slice(1) : remotePath
         const upload = new Upload({
@@ -139,11 +152,32 @@ export class S3Handler {
                 Body: createReadStream(localPath)
             }
         })
-        await upload.done()
-        return true
+
+        if (signal?.aborted) {
+            upload.abort()
+            throw new Error('Aborted')
+        }
+
+        const onAbort = () => {
+            upload.abort()
+        }
+        signal?.addEventListener('abort', onAbort)
+
+        try {
+            await upload.done()
+            return true
+        } finally {
+            signal?.removeEventListener('abort', onAbort)
+        }
     }
 
-    async getWithProgress(remotePath: string, localPath: string, onProgress: (totalTransferred: number, chunk: number, totalSize: number) => void, offset: number = 0) {
+    async getWithProgress(
+        remotePath: string,
+        localPath: string,
+        onProgress: (totalTransferred: number, chunk: number, totalSize: number) => void,
+        offset: number = 0,
+        signal?: AbortSignal
+    ) {
         if (!this.client || !this.bucket) throw new Error('Not connected')
         const key = remotePath.startsWith('/') ? remotePath.slice(1) : remotePath
 
@@ -163,27 +197,38 @@ export class S3Handler {
             onProgress(transferred, chunk.length, totalSize + offset)
         })
 
+        const onAbort = () => {
+            body.destroy()
+            writer.destroy()
+        }
+        if (signal?.aborted) {
+            onAbort()
+            throw new Error('Aborted')
+        }
+        signal?.addEventListener('abort', onAbort)
+
         return new Promise((resolve, reject) => {
             body.pipe(writer)
             writer.on('finish', () => resolve(true))
             writer.on('error', reject)
             body.on('error', reject)
+        }).finally(() => {
+            signal?.removeEventListener('abort', onAbort)
         })
     }
 
-    async putWithProgress(localPath: string, remotePath: string, onProgress: (totalTransferred: number, chunk: number, totalSize: number) => void, _offset: number = 0) {
-        console.log('S3 put offset ignored (not supported):', _offset)
+    async putWithProgress(
+        localPath: string,
+        remotePath: string,
+        onProgress: (totalTransferred: number, chunk: number, totalSize: number) => void,
+        offset: number = 0,
+        signal?: AbortSignal
+    ) {
         if (!this.client || !this.bucket) throw new Error('Not connected')
         const key = remotePath.startsWith('/') ? remotePath.slice(1) : remotePath
 
         const stats = await fs.stat(localPath)
         const totalSize = stats.size
-
-        // S3 doesn't easily support "append" for regular objects in a single PUT. 
-        // For simplicity in Phase 11, we re-upload or use Multipart if really large.
-        // But the RemoteHandler interface expects us to handle offset if possible.
-        // If offset > 0, we'd need to fetch existing and combine, or use multipart.
-        // For now, let's implement a standard upload with progress.
 
         const upload = new Upload({
             client: this.client,
@@ -198,12 +243,25 @@ export class S3Handler {
 
         upload.on('httpUploadProgress', (progress) => {
             if (progress.loaded) {
-                onProgress(progress.loaded, 0, progress.total || totalSize)
+                onProgress(progress.loaded + (offset ? 0 : 0), 0, progress.total || totalSize)
             }
         })
 
-        await upload.done()
-        return true
+        const onAbort = () => {
+            upload.abort()
+        }
+        if (signal?.aborted) {
+            onAbort()
+            throw new Error('Aborted')
+        }
+        signal?.addEventListener('abort', onAbort)
+
+        try {
+            await upload.done()
+            return true
+        } finally {
+            signal?.removeEventListener('abort', onAbort)
+        }
     }
 
     async readFile(remotePath: string): Promise<string> {

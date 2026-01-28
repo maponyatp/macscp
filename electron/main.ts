@@ -1,4 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { createRequire } from 'node:module'
+const require = createRequire(import.meta.url)
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron') as typeof import('electron')
+
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs/promises'
 import { watch } from 'node:fs'
@@ -11,6 +14,18 @@ import { transferManager } from './handlers/transfer'
 import { syncEngine } from './handlers/sync'
 import { fileWatcher } from './handlers/watcher'
 import { encryptionManager } from './handlers/encryption'
+import type { SSHProfile } from '../src/types'
+
+const editorWatchers = new Map<string, import('node:fs').FSWatcher>()
+
+// Global Error Handlers for Stability
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error)
+})
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason)
+})
 
 async function cleanupTempDrags(app: Electron.App) {
   const tempRoot = app.getPath('temp')
@@ -26,7 +41,7 @@ async function cleanupTempDrags(app: Electron.App) {
         }
       }
     }
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('Failed to cleanup temp directories:', err)
   }
 }
@@ -51,7 +66,7 @@ export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'parent') : RENDERER_DIST
 
-let win: typeof BrowserWindow.prototype | null
+let win: InstanceType<typeof BrowserWindow> | null
 
 function createWindow() {
   win = new BrowserWindow({
@@ -87,109 +102,114 @@ function createWindow() {
   transferManager.setWindow(win)
 }
 
-// IPC Handlers
-ipcMain.handle('local:list', handleLocalList)
-ipcMain.handle('remote:connect', (_, config) => remoteDispatcher.connect(config))
-ipcMain.handle('remote:list', (_, path) => remoteDispatcher.list(path))
-ipcMain.handle('remote:disconnect', () => remoteDispatcher.disconnect())
-ipcMain.handle('remote:get', (_, { remotePath, localPath }) => remoteDispatcher.get(remotePath, localPath))
-ipcMain.handle('remote:put', (_, { localPath, remotePath }) => remoteDispatcher.put(localPath, remotePath))
-ipcMain.handle('remote:shell-start', (event, { rows, cols }) => {
-  if (remoteDispatcher.getActiveProtocol() !== 'sftp') {
-    throw new Error('Terminal only supported for SFTP')
-  }
-  return sshHandler.spawnShell(rows, cols, (data) => {
-    event.sender.send('remote:shell-data', data)
+function setupIpcHandlers() {
+  ipcMain.handle('local:list', handleLocalList)
+  ipcMain.handle('remote:connect', (_: Electron.IpcMainInvokeEvent, config: Partial<SSHProfile>) => remoteDispatcher.connect(config))
+  ipcMain.handle('remote:list', (_: Electron.IpcMainInvokeEvent, path: string) => remoteDispatcher.list(path))
+  ipcMain.handle('remote:disconnect', () => remoteDispatcher.disconnect())
+  ipcMain.handle('remote:get', (_: Electron.IpcMainInvokeEvent, { remotePath, localPath }: { remotePath: string, localPath: string }) => remoteDispatcher.get(remotePath, localPath))
+  ipcMain.handle('remote:put', (_: Electron.IpcMainInvokeEvent, { localPath, remotePath }: { localPath: string, remotePath: string }) => remoteDispatcher.put(localPath, remotePath))
+  ipcMain.handle('remote:shell-start', (event: Electron.IpcMainInvokeEvent, { rows, cols }: { rows: number, cols: number }) => {
+    if (remoteDispatcher.getActiveProtocol() !== 'sftp') {
+      throw new Error('Terminal only supported for SFTP')
+    }
+    return sshHandler.spawnShell(rows, cols, (data) => {
+      event.sender.send('remote:shell-data', data)
+    })
   })
-})
-ipcMain.handle('remote:shell-write', (_, data) => sshHandler.writeShell(data))
-ipcMain.handle('remote:shell-resize', (_, { rows, cols }) => sshHandler.resizeShell(rows, cols))
-ipcMain.handle('remote:read-file', (_, remotePath) => remoteDispatcher.readFile(remotePath))
-ipcMain.handle('remote:write-file', (_, { remotePath, content }) => remoteDispatcher.writeFile(remotePath, content))
+  ipcMain.handle('remote:shell-write', (_: Electron.IpcMainInvokeEvent, data: string) => sshHandler.writeShell(data))
+  ipcMain.handle('remote:shell-resize', (_: Electron.IpcMainInvokeEvent, { rows, cols }: { rows: number, cols: number }) => sshHandler.resizeShell(rows, cols))
+  ipcMain.handle('remote:read-file', (_: Electron.IpcMainInvokeEvent, remotePath: string) => remoteDispatcher.readFile(remotePath))
+  ipcMain.handle('remote:write-file', (_: Electron.IpcMainInvokeEvent, { remotePath, content }: { remotePath: string, content: string }) => remoteDispatcher.writeFile(remotePath, content))
 
-ipcMain.handle('remote:edit-external', async (event, remotePath) => {
-  const fileName = path.basename(remotePath)
-  const tempDir = path.join(app.getPath('temp'), 'macscp-edit')
-  await fs.mkdir(tempDir, { recursive: true })
-  const localPath = path.join(tempDir, fileName)
+  ipcMain.handle('remote:edit-external', async (event: Electron.IpcMainInvokeEvent, remotePath: string) => {
+    const fileName = path.basename(remotePath)
+    const tempDir = path.join(app.getPath('temp'), 'macscp-edit')
+    await fs.mkdir(tempDir, { recursive: true })
+    const localPath = path.join(tempDir, fileName)
 
-  // 1. Download content
-  const content = await remoteDispatcher.readFile(remotePath)
-  await fs.writeFile(localPath, content)
+    // 1. Download content
+    const content = await remoteDispatcher.readFile(remotePath)
+    await fs.writeFile(localPath, content)
 
-  // 2. Open in external app
-  await shell.openPath(localPath)
+    // 2. Open in external app
+    await shell.openPath(localPath)
 
-  // 3. Watch for changes
-  let isUploading = false
-  watch(localPath, async (eventType) => {
-    if (eventType === 'change' && !isUploading) {
-      isUploading = true
-      try {
-        // Debounce slightly to ensure file handle is released
-        await new Promise(resolve => setTimeout(resolve, 100))
-        const newContent = await fs.readFile(localPath, 'utf8')
-        await remoteDispatcher.writeFile(remotePath, newContent)
-        event.sender.send('remote:edit-status', { path: remotePath, status: 'uploaded' })
-      } catch (err) {
-        event.sender.send('remote:edit-status', { path: remotePath, status: 'error', error: String(err) })
-      } finally {
-        isUploading = false
+    // 3. Watch for changes
+    if (editorWatchers.has(localPath)) {
+      editorWatchers.get(localPath)?.close()
+    }
+
+    let isUploading = false
+    const watcher = watch(localPath, async (eventType) => {
+      if (eventType === 'change' && !isUploading) {
+        isUploading = true
+        try {
+          // Debounce slightly to ensure file handle is released
+          await new Promise(resolve => setTimeout(resolve, 100))
+          const newContent = await fs.readFile(localPath, 'utf8')
+          await remoteDispatcher.writeFile(remotePath, newContent)
+          event.sender.send('remote:edit-status', { path: remotePath, status: 'uploaded' })
+        } catch (err) {
+          event.sender.send('remote:edit-status', { path: remotePath, status: 'error', error: String(err) })
+        } finally {
+          isUploading = false
+        }
       }
+    })
+
+    editorWatchers.set(localPath, watcher)
+
+    return { localPath }
+  })
+
+  ipcMain.handle('remote:start-drag', async (event: Electron.IpcMainInvokeEvent, remotePath: string) => {
+    try {
+      const localPath = await remoteDispatcher.startDrag(remotePath)
+      // Use a more appropriate icon if available, or just generic file icon
+      // Note: drag requires a valid file path for the icon
+      event.sender.startDrag({
+        file: localPath,
+        icon: path.join(process.env.VITE_PUBLIC, 'file-icon.png')
+      })
+    } catch (err) {
+      console.error('Failed to start native drag:', err)
     }
   })
 
-  // Cleanup watcher when app closes or after some time? 
-  // For now, let's keep it simple.
-  return { localPath }
-})
-
-ipcMain.handle('remote:start-drag', async (event, remotePath) => {
-  try {
-    const localPath = await remoteDispatcher.startDrag(remotePath)
-    // Use a more appropriate icon if available, or just generic file icon
-    // Note: drag requires a valid file path for the icon
-    event.sender.startDrag({
-      file: localPath,
-      icon: path.join(process.env.VITE_PUBLIC, 'file-icon.png')
+  ipcMain.handle('dialog:open-file', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [
+        { name: 'All Files', extensions: ['*'] },
+        { name: 'SSH Keys', extensions: ['key', 'pem', 'id_rsa', 'id_ed25519'] }
+      ]
     })
-  } catch (err) {
-    console.error('Failed to start native drag:', err)
-  }
-})
-
-ipcMain.handle('dialog:open-file', async () => {
-  const result = await dialog.showOpenDialog({
-    properties: ['openFile'],
-    filters: [
-      { name: 'All Files', extensions: ['*'] },
-      { name: 'SSH Keys', extensions: ['key', 'pem', 'id_rsa', 'id_ed25519'] }
-    ]
+    if (result.canceled) return null
+    return result.filePaths[0]
   })
-  if (result.canceled) return null
-  return result.filePaths[0]
-})
 
-// Transfer Handlers are setup in TransferManager
-transferManager.setupHandlers(app, ipcMain)
+  // Transfer Handlers are setup in TransferManager
+  transferManager.setupHandlers(app, ipcMain)
 
-ipcMain.handle('sync:compare', (_, { localDir, remoteDir }) => syncEngine.compare(localDir, remoteDir))
+  ipcMain.handle('sync:compare', (_: Electron.IpcMainInvokeEvent, { localDir, remoteDir }: { localDir: string, remoteDir: string }) => syncEngine.compare(localDir, remoteDir))
 
-fileWatcher.setupHandlers(ipcMain)
+  fileWatcher.setupHandlers(ipcMain)
 
-ipcMain.handle('encryption:set', async (_, password) => {
-  await encryptionManager.setMasterPassword(password)
-  return true
-})
-ipcMain.handle('encryption:clear', () => {
-  encryptionManager.clear()
-  return true
-})
-ipcMain.handle('encryption:unlocked', () => {
-  return encryptionManager.isUnlocked()
-})
+  ipcMain.handle('encryption:set', async (_: Electron.IpcMainInvokeEvent, password: string) => {
+    await encryptionManager.setMasterPassword(password)
+    return true
+  })
+  ipcMain.handle('encryption:clear', () => {
+    encryptionManager.clear()
+    return true
+  })
+  ipcMain.handle('encryption:unlocked', () => {
+    return encryptionManager.isUnlocked()
+  })
 
-setupSettingsHandlers(app, ipcMain)
+  setupSettingsHandlers(app, ipcMain)
+}
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
@@ -210,6 +230,11 @@ app.on('activate', () => {
 })
 
 app.whenReady().then(async () => {
-  await cleanupTempDrags(app)
-  createWindow()
+  try {
+    await cleanupTempDrags(app)
+    setupIpcHandlers()
+    createWindow()
+  } catch (err) {
+    console.error('Failed to start application:', err)
+  }
 })
