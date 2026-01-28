@@ -5,14 +5,15 @@ import * as ftp from 'basic-ftp'
 
 // Mock basic-ftp
 vi.mock('basic-ftp', () => {
-    const MockClient = vi.fn(() => ({
-        access: vi.fn(),
-        list: vi.fn(),
-        close: vi.fn(),
-        downloadTo: vi.fn(),
-        uploadFrom: vi.fn(),
-        trackProgress: vi.fn()
-    }))
+    // We create a mock class structure
+    const MockClient = vi.fn()
+    MockClient.prototype.access = vi.fn()
+    MockClient.prototype.list = vi.fn()
+    MockClient.prototype.close = vi.fn()
+    MockClient.prototype.downloadTo = vi.fn()
+    MockClient.prototype.uploadFrom = vi.fn()
+    MockClient.prototype.trackProgress = vi.fn()
+
     return {
         Client: MockClient
     }
@@ -20,14 +21,13 @@ vi.mock('basic-ftp', () => {
 
 describe('FTPHandler', () => {
     let handler: FTPHandler
-    let mockClientInstance: any
+    let mockClientPrototype: any
 
     beforeEach(() => {
         vi.clearAllMocks()
         handler = new FTPHandler()
-        // Access the mock instance that will be created
-        // Since we can't easily access the internal instance before it's created,
-        // we'll spy on the constructor or just assume the mock implementation works.
+        // @ts-ignore
+        mockClientPrototype = ftp.Client.prototype
     })
 
     it('should connect successfully', async () => {
@@ -36,11 +36,14 @@ describe('FTPHandler', () => {
             port: 21,
             username: 'user',
             password: 'password',
-            protocol: 'ftp'
+            protocol: 'ftp' // matches the types
         }
 
-        const result = await handler.connect(config)
+        mockClientPrototype.access.mockResolvedValue(undefined)
+
+        const result = await handler.connect(config as any)
         expect(result).toEqual({ status: 'connected' })
+        expect(mockClientPrototype.access).toHaveBeenCalled()
     })
 
     it('should list files', async () => {
@@ -49,23 +52,15 @@ describe('FTPHandler', () => {
             username: 'user',
             password: 'password'
         }
-        await handler.connect(config)
-
-        // We need to find the client instance created inside `handler.connect`
-        // Since we mocked `basic-ftp`, `new ftp.Client()` return our mock object.
-        // But we need to define the return value of `list` on THAT object.
-
-        // Let's rely on `vi.mocked` or similar to get the class mock
-        const MockClient = vi.mocked(ftp.Client)
-        // The instance is the result of the constructor call
-        const mockInstance = MockClient.mock.results[0].value
+        mockClientPrototype.access.mockResolvedValue(undefined)
+        await handler.connect(config as any)
 
         const mockList = [
             { name: 'file1.txt', isDirectory: false, size: 100, modifiedAt: new Date() },
             { name: 'dir1', isDirectory: true, size: 0, modifiedAt: new Date() }
         ]
 
-        mockInstance.list.mockResolvedValue(mockList)
+        mockClientPrototype.list.mockResolvedValue(mockList)
 
         const files = await handler.list('/')
         expect(files).toHaveLength(2)
