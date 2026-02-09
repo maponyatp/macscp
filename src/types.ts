@@ -43,6 +43,7 @@ export interface TransferTask {
     totalSize: number
     transferredSize: number
     speed: number // bytes per second
+    isDirectory?: boolean
     error?: string
     retryCount?: number
 }

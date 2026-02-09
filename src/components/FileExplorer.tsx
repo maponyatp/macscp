@@ -318,9 +318,9 @@ function FileList({
     )
 }
 
-export function FileExplorer({ settings = defaultSettings }: { settings?: AppSettings }) {
+export function FileExplorer({ settings = defaultSettings, initialRemotePath }: { settings?: AppSettings, initialRemotePath?: string }) {
     const [localPath, setLocalPath] = useState(settings.defaultLocalPath || '/')
-    const [remotePath, setRemotePath] = useState('/root') // Default for VPS, configurable
+    const [remotePath, setRemotePath] = useState(initialRemotePath || '/root') // Default to /root if not specified
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, file: FileEntry } | null>(null)
     const [editingFile, setEditingFile] = useState<string | null>(null)
     const [showSync, setShowSync] = useState(false)
@@ -380,15 +380,17 @@ export function FileExplorer({ settings = defaultSettings }: { settings?: AppSet
 
     async function handleUpload(file: FileEntry) {
         const localFilePath = localPath === '/' ? `/${file.name}` : `${localPath}/${file.name}`
-        const remoteFilePath = remotePath === '/' ? `/${file.name}` : `${remotePath}/${file.name}`
+        const remoteFilePath = (remotePath.endsWith('/') ? remotePath : remotePath + '/') + file.name
+        const normalizedRemotePath = remoteFilePath.replace(/\/+/g, '/')
 
         try {
             await window.api.transferAdd({
                 type: 'upload',
                 localPath: localFilePath,
-                remotePath: remoteFilePath,
+                remotePath: normalizedRemotePath,
                 fileName: file.name,
-                totalSize: file.size
+                totalSize: file.size,
+                isDirectory: file.isDirectory
             })
             toast.info(`Queued upload: ${file.name}`)
         } catch (err) {
@@ -398,15 +400,17 @@ export function FileExplorer({ settings = defaultSettings }: { settings?: AppSet
 
     async function handleDownload(file: FileEntry) {
         const localFilePath = localPath === '/' ? `/${file.name}` : `${localPath}/${file.name}`
-        const remoteFilePath = remotePath === '/' ? `/${file.name}` : `${remotePath}/${file.name}`
+        const remoteFilePath = (remotePath.endsWith('/') ? remotePath : remotePath + '/') + file.name
+        const normalizedRemotePath = remoteFilePath.replace(/\/+/g, '/')
 
         try {
             await window.api.transferAdd({
                 type: 'download',
                 localPath: localFilePath,
-                remotePath: remoteFilePath,
+                remotePath: normalizedRemotePath,
                 fileName: file.name,
-                totalSize: file.size
+                totalSize: file.size,
+                isDirectory: file.isDirectory
             })
             toast.info(`Queued download: ${file.name}`)
         } catch (err) {
@@ -428,7 +432,8 @@ export function FileExplorer({ settings = defaultSettings }: { settings?: AppSet
                     localPath: localFilePath,
                     remotePath: remoteFilePath,
                     fileName: file.name,
-                    totalSize: file.size
+                    totalSize: file.size,
+                    isDirectory: false // Files from drop are always files initially for now
                 })
             } catch (err) {
                 console.error('Failed to queue drop upload:', file.name)

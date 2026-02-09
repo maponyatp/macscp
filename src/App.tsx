@@ -95,7 +95,7 @@ function App() {
           <div className="h-full flex flex-col">
             {/* Toolbar could go here */}
             <div className="flex-1 min-h-0">
-              <FileExplorer settings={settings} />
+              <FileExplorer settings={settings} initialRemotePath={activeConfig?.folder} />
             </div>
 
             {/* Status Bar */}

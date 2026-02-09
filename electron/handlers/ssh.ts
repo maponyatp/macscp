@@ -60,7 +60,7 @@ export class SSHHandler {
         return new Promise((resolve, reject) => {
             this.sftp!.readdir(remotePath, (err, list) => {
                 if (err) {
-                    reject(err)
+                    reject(new Error(`Failed to list remote directory: ${err.message}`))
                     return
                 }
 
@@ -152,7 +152,11 @@ export class SSHHandler {
             }, (err: Error | null | undefined) => {
                 signal?.removeEventListener('abort', onAbort)
                 sftp.end()
-                if (err) reject(err)
+                if (err) {
+                    const error = new Error(`Failed to download file: ${err.message}`)
+                        ; (error as any).code = (err as any).code
+                    reject(error)
+                }
                 else resolve(true)
             })
         })
@@ -179,7 +183,11 @@ export class SSHHandler {
             }, (err: Error | null | undefined) => {
                 signal?.removeEventListener('abort', onAbort)
                 sftp.end()
-                if (err) reject(err)
+                if (err) {
+                    const error = new Error(`Failed to upload file: ${err.message}`)
+                        ; (error as any).code = (err as any).code
+                    reject(error)
+                }
                 else resolve(true)
             })
         })

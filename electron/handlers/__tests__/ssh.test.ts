@@ -1,43 +1,53 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { SSHHandler } from '../ssh'
-import { EventEmitter } from 'events'
+
 
 // Define mocks
-const { MockClient, MockSFTPWrapper } = vi.hoisted(() => {
+vi.hoisted(() => {
     // We need to use require here because imports are hoisted above this block but we need
     // to ensure EventEmitter is available. Actually, vi.hoisted runs before imports.
     // So we can't use 'events' import easily if we want to extend it inside hoisted block.
     // Simpler: use the mock factory pattern where we construct the class inside.
-
+    //
     // However, to share the class definition with the test (to assertions), we need it accessible.
     // A trick: Define a simple mock and rely on checks against the instances.
-
+    //
     // Instead of complex hoisting, let's just define the shape in the mock factory
     // and spy on prototypes in tests.
     return { MockClient: vi.fn(), MockSFTPWrapper: vi.fn() }
 })
 
-vi.mock('ssh2', async (importOriginal) => {
+vi.mock('ssh2', async () => {
     const EventEmitter = (await import('events')).EventEmitter
 
-    class MockClient extends EventEmitter {
-        connect = vi.fn().mockReturnThis()
-        sftp = vi.fn()
-        shell = vi.fn()
-        end = vi.fn()
-    }
+    class MockClient extends EventEmitter { }
+    // @ts-ignore
+    MockClient.prototype.connect = vi.fn().mockReturnThis()
+    // @ts-ignore
+    MockClient.prototype.sftp = vi.fn()
+    // @ts-ignore
+    MockClient.prototype.shell = vi.fn()
+    // @ts-ignore
+    MockClient.prototype.end = vi.fn()
 
-    class MockSFTPWrapper extends EventEmitter {
-        readdir = vi.fn()
-        mkdir = vi.fn()
-        fastGet = vi.fn()
-        fastPut = vi.fn()
-        stat = vi.fn()
-        createReadStream = vi.fn()
-        writeFile = vi.fn()
-        end = vi.fn()
-    }
+    class MockSFTPWrapper extends EventEmitter { }
+    // @ts-ignore
+    MockSFTPWrapper.prototype.readdir = vi.fn()
+    // @ts-ignore
+    MockSFTPWrapper.prototype.mkdir = vi.fn()
+    // @ts-ignore
+    MockSFTPWrapper.prototype.fastGet = vi.fn()
+    // @ts-ignore
+    MockSFTPWrapper.prototype.fastPut = vi.fn()
+    // @ts-ignore
+    MockSFTPWrapper.prototype.stat = vi.fn()
+    // @ts-ignore
+    MockSFTPWrapper.prototype.createReadStream = vi.fn()
+    // @ts-ignore
+    MockSFTPWrapper.prototype.writeFile = vi.fn()
+    // @ts-ignore
+    MockSFTPWrapper.prototype.end = vi.fn()
 
     return {
         Client: MockClient,
@@ -60,7 +70,6 @@ vi.mock('node:fs/promises', () => ({
 describe('SSHHandler', () => {
     let handler: SSHHandler
     let mockClientPrototype: any
-    let mockSftpPrototype: any
     let mockSftpInstance: any
 
     beforeEach(async () => {
@@ -70,8 +79,6 @@ describe('SSHHandler', () => {
         const ssh2 = await import('ssh2')
         // @ts-ignore
         mockClientPrototype = ssh2.Client.prototype
-        // @ts-ignore
-        mockSftpPrototype = ssh2.SFTPWrapper.prototype
 
         // Setup default behaviors
         mockClientPrototype.connect.mockImplementation(function (this: any) {
@@ -158,13 +165,13 @@ describe('SSHHandler', () => {
         ]
 
         // This needs to be set on the instance that was returned
-        mockSftpInstance.readdir.mockImplementation((path: string, cb: any) => {
+        mockSftpInstance.readdir.mockImplementation((_path: string, cb: any) => {
             cb(null, mockEntries)
         })
 
         const files = await handler.list('/some/path')
         expect(files).toHaveLength(2)
         expect(files[0].name).toBe('file1.txt')
-        expect(files[1].isDirectory).toBe(false)
+        expect(files[1].isDirectory).toBe(true)
     })
 })

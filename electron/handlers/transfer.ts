@@ -147,9 +147,39 @@ export class TransferManager {
             this.activeControllers.set(task.id, controller)
 
             if (task.type === 'download') {
-                await remoteDispatcher.getWithProgress(task.remotePath, task.localPath, onProgress, startOffset, controller.signal)
+                if (task.isDirectory && (remoteDispatcher.handler as any).downloadDirWithProgress) {
+                    const state = { transferred: startOffset }
+                    await (remoteDispatcher.handler as any).downloadDirWithProgress(
+                        task.remotePath,
+                        task.localPath,
+                        onProgress,
+                        (globalTransferred: number) => {
+                            task.transferredSize = globalTransferred
+                        },
+                        task.totalSize,
+                        state,
+                        controller.signal
+                    )
+                } else {
+                    await remoteDispatcher.getWithProgress(task.remotePath, task.localPath, onProgress, startOffset, controller.signal)
+                }
             } else {
-                await remoteDispatcher.putWithProgress(task.localPath, task.remotePath, onProgress, startOffset, controller.signal)
+                if (task.isDirectory && (remoteDispatcher.handler as any).uploadDirWithProgress) {
+                    const state = { transferred: startOffset }
+                    await (remoteDispatcher.handler as any).uploadDirWithProgress(
+                        task.localPath,
+                        task.remotePath,
+                        onProgress,
+                        (globalTransferred: number) => {
+                            task.transferredSize = globalTransferred
+                        },
+                        task.totalSize,
+                        state,
+                        controller.signal
+                    )
+                } else {
+                    await remoteDispatcher.putWithProgress(task.localPath, task.remotePath, onProgress, startOffset, controller.signal)
+                }
             }
 
             task.status = 'completed'
