@@ -107,7 +107,7 @@ function App() {
       {!isUnlocked && (
         <MasterPasswordModal onUnlock={() => setIsUnlocked(true)} />
       )}
-      <Shell activeTab={activeTab} onTabChange={setActiveTab}>
+      <Shell activeTab={activeTab} onTabChange={setActiveTab} isConnected={isConnected}>
         {activeTab === 'manager' && !isConnected && (
           <ConnectionManager onConnect={(config) => {
             setIsConnected(true)

@@ -1,5 +1,5 @@
 import { ReactNode } from 'react'
-import { FolderGit2, Settings, Plus, Terminal, Activity } from 'lucide-react'
+import { FolderGit2, Settings, Plus, Terminal, Activity, Folder } from 'lucide-react'
 import clsx from 'clsx'
 import { twMerge } from 'tailwind-merge'
 
@@ -7,9 +7,10 @@ interface ShellProps {
     children: ReactNode
     activeTab: 'manager' | 'sessions' | 'terminal' | 'dashboard' | 'settings'
     onTabChange: (tab: 'manager' | 'sessions' | 'terminal' | 'dashboard' | 'settings') => void
+    isConnected?: boolean
 }
 
-export function Shell({ children, activeTab, onTabChange }: ShellProps) {
+export function Shell({ children, activeTab, onTabChange, isConnected }: ShellProps) {
     function cn(...inputs: (string | undefined | null | false)[]) {
         return twMerge(clsx(inputs))
     }
@@ -39,7 +40,11 @@ export function Shell({ children, activeTab, onTabChange }: ShellProps) {
                 </div>
 
                 <div className="space-y-1">
-                    <NavItem id="manager" icon={Plus} label="New Connection" />
+                    <NavItem
+                        id="manager"
+                        icon={isConnected ? Folder : Plus}
+                        label={isConnected ? "File Explorer" : "New Connection"}
+                    />
                     <NavItem id="sessions" icon={FolderGit2} label="Saved Sessions" />
                     <NavItem id="terminal" icon={Terminal} label="Terminal" />
                     <NavItem id="dashboard" icon={Activity} label="Server Dashboard" />
