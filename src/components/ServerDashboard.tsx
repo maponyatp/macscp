@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Activity, Server, HardDrive, Cpu, Clock, RefreshCw } from 'lucide-react'
+import { Activity, Server, HardDrive, Cpu, Clock, RefreshCw, Terminal, Network, List } from 'lucide-react'
 
 // Simple Circular Progress component
 const CircularProgress = ({ value, label, colorClass }: { value: number, label: string, colorClass: string }) => {
@@ -47,8 +47,19 @@ interface ServerMetrics {
     diskUsedRatio: number
 }
 
+interface ProcessInfo {
+    pid: string
+    cmd: string
+    mem: string
+    cpu: string
+}
+
 export function ServerDashboard() {
     const [metrics, setMetrics] = useState<ServerMetrics | null>(null)
+    const [processes, setProcesses] = useState<ProcessInfo[]>([])
+    const [networkInfo, setNetworkInfo] = useState<string>('')
+    const [sysLogs, setSysLogs] = useState<string>('')
+
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
 
@@ -107,6 +118,42 @@ export function ServerDashboard() {
                 diskTotal,
                 diskUsedRatio
             })
+
+            // 4. Top Processes
+            try {
+                const psRaw = await window.api.remoteExecCommand('ps -eo pid,%mem,%cpu,comm --sort=-%cpu | head -6')
+                const lines = psRaw.trim().split('\n').slice(1) // skip header
+                const procs = lines.map(line => {
+                    const parts = line.trim().split(/\s+/)
+                    return {
+                        pid: parts[0],
+                        mem: parts[1],
+                        cpu: parts[2],
+                        cmd: parts.slice(3).join(' ')
+                    }
+                })
+                setProcesses(procs)
+            } catch (e) {
+                console.warn('Could not fetch processes', e)
+            }
+
+            // 5. Network Interfaces (only fetch once or periodically)
+            try {
+                const ipRaw = await window.api.remoteExecCommand('ip -4 addr show || ifconfig')
+                setNetworkInfo(ipRaw.trim())
+            } catch (e) {
+                setNetworkInfo('Network info unavailable')
+            }
+
+            // 6. System Logs (Tail)
+            try {
+                // Try syslog first, fallback to dmesg if permission denied
+                const logRaw = await window.api.remoteExecCommand('tail -n 10 /var/log/syslog 2>/dev/null || tail -n 10 /var/log/messages 2>/dev/null || dmesg | tail -n 10')
+                setSysLogs(logRaw.trim() || 'No logs available or permission denied.')
+            } catch (e) {
+                setSysLogs('Logs unavailable. Requires root privileges.')
+            }
+
             setError(null)
         } catch (err) {
             setError(String(err))
@@ -212,6 +259,73 @@ export function ServerDashboard() {
                         </div>
                     </div>
 
+                </div>
+
+                {/* Advanced Utilities Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                    {/* Top Processes */}
+                    <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl flex flex-col overflow-hidden">
+                        <div className="p-4 border-b border-zinc-800 flex items-center gap-2 text-zinc-300 font-medium">
+                            <List className="h-4 w-4 text-blue-400" />
+                            Active Processes
+                        </div>
+                        <div className="p-4 flex-1 overflow-auto">
+                            <table className="w-full text-sm text-left">
+                                <thead className="text-zinc-500 text-xs uppercase">
+                                    <tr>
+                                        <th className="pb-2 font-medium">PID</th>
+                                        <th className="pb-2 font-medium">Command</th>
+                                        <th className="pb-2 font-medium text-right">CPU%</th>
+                                        <th className="pb-2 font-medium text-right">MEM%</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="text-zinc-300">
+                                    {processes.map(proc => (
+                                        <tr key={proc.pid} className="border-t border-zinc-800/50">
+                                            <td className="py-2 text-zinc-500">{proc.pid}</td>
+                                            <td className="py-2 truncate max-w-[120px]" title={proc.cmd}>{proc.cmd}</td>
+                                            <td className="py-2 text-right font-mono">{proc.cpu}</td>
+                                            <td className="py-2 text-right font-mono">{proc.mem}</td>
+                                        </tr>
+                                    ))}
+                                    {processes.length === 0 && (
+                                        <tr><td colSpan={4} className="py-4 text-center text-zinc-600">No process data</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    {/* Network Interfaces */}
+                    <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl flex flex-col overflow-hidden">
+                        <div className="p-4 border-b border-zinc-800 flex items-center gap-2 text-zinc-300 font-medium">
+                            <Network className="h-4 w-4 text-emerald-400" />
+                            Network Interfaces
+                        </div>
+                        <div className="p-4 flex-1 overflow-auto bg-black/20">
+                            <pre className="text-xs text-emerald-500/80 font-mono whitespace-pre-wrap break-words">
+                                {networkInfo}
+                            </pre>
+                        </div>
+                    </div>
+
+                </div>
+
+                {/* System Logs */}
+                <div className="bg-zinc-900/50 border border-zinc-800 rounded-2xl flex flex-col overflow-hidden">
+                    <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-zinc-300 font-medium">
+                            <Terminal className="h-4 w-4 text-orange-400" />
+                            System Activity Log
+                        </div>
+                        <span className="text-[10px] uppercase text-zinc-600 border border-zinc-700 px-2 py-0.5 rounded">Tail -n 10</span>
+                    </div>
+                    <div className="p-4 overflow-auto bg-[#0a0a0a] min-h-[160px]">
+                        <pre className="text-xs text-zinc-400 font-mono whitespace-pre-wrap leading-relaxed">
+                            {sysLogs}
+                        </pre>
+                    </div>
                 </div>
 
                 {/* Server Info Footer */}
