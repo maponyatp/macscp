@@ -115,6 +115,31 @@ export class SSHHandler {
         })
     }
 
+    async execCommand(command: string): Promise<string> {
+        if (!this.client) throw new Error('Not connected')
+        return new Promise((resolve, reject) => {
+            this.client!.exec(command, (err, stream) => {
+                if (err) return reject(err)
+                let stdout = ''
+                let stderr = ''
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                stream.on('close', (code: any) => {
+                    if (code !== 0) {
+                        reject(new Error(`Command failed with exit code ${code}: ${stderr}`))
+                    } else {
+                        resolve(stdout)
+                    }
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                }).on('data', (data: any) => {
+                    stdout += data
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                }).stderr.on('data', (data: any) => {
+                    stderr += data
+                })
+            })
+        })
+    }
+
     async put(localPath: string, remotePath: string, signal?: AbortSignal) {
         const sftp = await this.getSftp()
         return new Promise((resolve, reject) => {
@@ -154,7 +179,7 @@ export class SSHHandler {
                 sftp.end()
                 if (err) {
                     const error = new Error(`Failed to download file: ${err.message}`)
-                        ; (error as any).code = (err as any).code
+                        ; (error as Error & { code?: number | string }).code = (err as Error & { code?: number | string }).code
                     reject(error)
                 }
                 else resolve(true)
@@ -185,7 +210,7 @@ export class SSHHandler {
                 sftp.end()
                 if (err) {
                     const error = new Error(`Failed to upload file: ${err.message}`)
-                        ; (error as any).code = (err as any).code
+                        ; (error as Error & { code?: number | string }).code = (err as Error & { code?: number | string }).code
                     reject(error)
                 }
                 else resolve(true)
@@ -389,6 +414,22 @@ export class SSHHandler {
             stream.on('error', (err: Error) => reject(err))
             stream.on('close', () => {
                 resolve(Buffer.concat(chunks).toString('utf8'))
+            })
+        })
+    }
+
+    async readBuffer(remotePath: string): Promise<string> {
+        if (!this.sftp) throw new Error('Not connected')
+
+        return new Promise((resolve, reject) => {
+            const chunks: Buffer[] = []
+            const stream = this.sftp!.createReadStream(remotePath)
+
+            stream.on('data', (chunk: Buffer) => chunks.push(chunk))
+            stream.on('error', (err: Error) => reject(err))
+            // Return base64 string directly for IPC
+            stream.on('close', () => {
+                resolve(Buffer.concat(chunks).toString('base64'))
             })
         })
     }

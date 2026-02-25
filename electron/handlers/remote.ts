@@ -54,8 +54,26 @@ export class RemoteDispatcher {
         return this.handler.readFile(remotePath)
     }
 
+    async readBuffer(remotePath: string) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (typeof (this.handler as any).readBuffer !== 'function') {
+            throw new Error(`Buffer reading is not supported for ${this.activeProtocol}`)
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return (this.handler as any).readBuffer(remotePath)
+    }
+
     async writeFile(remotePath: string, content: string) {
         return this.handler.writeFile(remotePath, content)
+    }
+
+    async execCommand(command: string) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (typeof (this.handler as any).execCommand !== 'function') {
+            throw new Error(`Command execution is not supported for ${this.activeProtocol}`)
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return (this.handler as any).execCommand(command)
     }
 
     async getWithProgress(remotePath: string, localPath: string, onProgress: (totalTransferred: number, chunk: number, totalSize: number) => void, offset?: number, signal?: AbortSignal) {

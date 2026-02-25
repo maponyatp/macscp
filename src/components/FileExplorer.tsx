@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Folder, File, ArrowLeft, RefreshCw, HardDrive, Server, type LucideIcon, RefreshCcw, Eye, EyeOff, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { AppSettings, defaultSettings } from '../types'
 import { FileEditor } from './FileEditor'
 import { SyncDialog } from './SyncDialog'
+import { MediaViewer } from './MediaViewer'
+import { useVirtualizer } from '@tanstack/react-virtual'
 
 interface FileEntry {
     name: string
@@ -27,6 +29,8 @@ interface FileListProps {
     showHiddenFiles: boolean
     refreshTrigger?: number
     onContextMenu?: (e: React.MouseEvent, file: FileEntry) => void
+    onPreview?: (file: FileEntry, remotePath: string) => void
+    onEdit?: (remotePath: string) => void
 }
 
 function FileList({
@@ -39,7 +43,9 @@ function FileList({
     onDropFiles,
     showHiddenFiles,
     refreshTrigger,
-    onContextMenu
+    onContextMenu,
+    onPreview,
+    onEdit
 }: FileListProps) {
     const [files, setFiles] = useState<FileEntry[]>([])
     const [loading, setLoading] = useState(false)
@@ -82,12 +88,19 @@ function FileList({
         refresh()
     }, [refresh, refreshTrigger])
 
-    // Filtered files based on search query
     const filteredFiles = useMemo(() => {
         if (!searchQuery.trim()) return files
         const query = searchQuery.toLowerCase()
         return files.filter(f => f.name.toLowerCase().includes(query))
     }, [files, searchQuery])
+
+    const parentRef = useRef<HTMLDivElement>(null)
+    const virtualizer = useVirtualizer({
+        count: filteredFiles.length,
+        getScrollElement: () => parentRef.current,
+        estimateSize: () => 36,
+        overscan: 5,
+    })
 
     function handleNavigate(entry: FileEntry) {
         if (entry.isDirectory) {
@@ -98,6 +111,15 @@ function FileList({
             // Normalize to remove any double slashes
             const normalized = newPath.replace(/\/+/g, '/')
             onPathChange(normalized)
+        } else if (title === 'Remote') {
+            const cleanPath = path.replace(/\/+$/, '') || '/'
+            const fullPath = cleanPath === '/' ? `/${entry.name}` : `${cleanPath}/${entry.name}`
+
+            if (entry.name.match(/\.(jpg|jpeg|png|gif|webp|svg|bmp|pdf)$/i)) {
+                onPreview?.(entry, fullPath)
+            } else if (!entry.name.match(/\.(zip|tar\.gz|tgz|gz|exe|dll)$/i)) {
+                onEdit?.(fullPath)
+            }
         }
     }
 
@@ -230,11 +252,11 @@ function FileList({
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-auto p-2">
+            <div ref={parentRef} className="flex-1 overflow-auto p-2">
                 {error ? (
                     <div className="text-red-400 text-xs p-2 text-center">{error}</div>
                 ) : (
-                    <div className="space-y-0.5" onDragStart={(e) => {
+                    <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }} onDragStart={(e) => {
                         const target = e.target as HTMLElement
                         const fileName = target.getAttribute('data-filename')
                         const isDirectory = target.getAttribute('data-isdir') === 'true'
@@ -255,50 +277,62 @@ function FileList({
                             window.api.remoteStartDrag(fullPath)
                         }
                     }}>
-                        {filteredFiles.map((file) => (
-                            <div
-                                key={file.name}
-                                onContextMenu={(e) => onContextMenu?.(e, file)}
-                                draggable={true}
-                                data-filename={file.name}
-                                data-isdir={file.isDirectory}
-                                data-size={file.size}
-                                className={`
-                            group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer select-none text-sm animate-in fade-in duration-200
+                        {virtualizer.getVirtualItems().map((virtualRow) => {
+                            const file = filteredFiles[virtualRow.index]
+                            return (
+                                <div
+                                    key={virtualRow.key}
+                                    data-index={virtualRow.index}
+                                    ref={virtualizer.measureElement}
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        transform: `translateY(${virtualRow.start}px)`
+                                    }}
+                                    onContextMenu={(e) => onContextMenu?.(e, file)}
+                                    draggable={true}
+                                    data-filename={file.name}
+                                    data-isdir={file.isDirectory}
+                                    data-size={file.size}
+                                    className={`
+                            group flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer select-none text-sm
                             ${file.isDirectory ? 'text-blue-100 hover:bg-blue-500/20' : 'text-zinc-300 hover:bg-zinc-700/50'}
                         `}
-                            >
-                                <div
-                                    className="flex-1 flex items-center gap-2 overflow-hidden"
-                                    onClick={() => handleNavigate(file)}
                                 >
-                                    {file.isDirectory ? (
-                                        <Folder className="h-4 w-4 text-blue-400" />
-                                    ) : (
-                                        <File className="h-4 w-4 text-zinc-500" />
-                                    )}
-                                    <span className="truncate">{file.name}</span>
-                                </div>
-
-                                {onTransfer && (
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation()
-                                            onTransfer(file)
-                                        }}
-                                        className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-600 rounded text-xs px-2 bg-zinc-700 text-zinc-300 flex items-center gap-1"
-                                        title={title === 'Local' ? 'Upload Folder' : 'Download Folder'}
+                                    <div
+                                        className="flex-1 flex items-center gap-2 overflow-hidden"
+                                        onClick={() => handleNavigate(file)}
                                     >
-                                        {file.isDirectory && <Folder className="h-3 w-3" />}
-                                        {title === 'Local' ? 'Upload' : 'Download'}
-                                    </button>
-                                )}
+                                        {file.isDirectory ? (
+                                            <Folder className="h-4 w-4 text-blue-400" />
+                                        ) : (
+                                            <File className="h-4 w-4 text-zinc-500" />
+                                        )}
+                                        <span className="truncate">{file.name}</span>
+                                    </div>
 
-                                <span className="text-xs text-zinc-600 font-mono w-16 text-right">
-                                    {file.isDirectory ? 'DIR' : (file.size / 1024).toFixed(1) + ' KB'}
-                                </span>
-                            </div>
-                        ))}
+                                    {onTransfer && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                onTransfer(file)
+                                            }}
+                                            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-zinc-600 rounded text-xs px-2 bg-zinc-700 text-zinc-300 flex items-center gap-1"
+                                            title={title === 'Local' ? 'Upload Folder' : 'Download Folder'}
+                                        >
+                                            {file.isDirectory && <Folder className="h-3 w-3" />}
+                                            {title === 'Local' ? 'Upload' : 'Download'}
+                                        </button>
+                                    )}
+
+                                    <span className="text-xs text-zinc-600 font-mono w-16 text-right">
+                                        {file.isDirectory ? 'DIR' : (file.size / 1024).toFixed(1) + ' KB'}
+                                    </span>
+                                </div>
+                            )
+                        })}
                         {filteredFiles.length === 0 && !loading && (
                             <div className="text-zinc-500 text-xs text-center py-4 flex flex-col gap-2 items-center">
                                 {searchQuery ? (
@@ -325,6 +359,11 @@ export function FileExplorer({ settings = defaultSettings, initialRemotePath }: 
     const [editingFile, setEditingFile] = useState<string | null>(null)
     const [showSync, setShowSync] = useState(false)
     const [isWatching, setIsWatching] = useState(false)
+    const [chmodDialog, setChmodDialog] = useState<FileEntry | null>(null)
+    const [chmodeValue, setChmodeValue] = useState('755')
+    const [chownDialog, setChownDialog] = useState<FileEntry | null>(null)
+    const [chownValue, setChownValue] = useState('root:root')
+    const [previewFile, setPreviewFile] = useState<{ file: FileEntry, remotePath: string } | null>(null)
 
     const checkWatchStatus = useCallback(async () => {
         const active = await window.api.watcherActive(localPath)
@@ -442,6 +481,20 @@ export function FileExplorer({ settings = defaultSettings, initialRemotePath }: 
         toast.info(`Queued ${files.length} file(s) for upload`)
     }
 
+    async function handleRemoteCmd(cmd: string, successMsg: string) {
+        try {
+            toast.loading('Executing...', { id: 'remote-cmd' })
+            await window.api.remoteExecCommand(cmd)
+            toast.success(successMsg, { id: 'remote-cmd' })
+            // We need a way to trigger a refresh of the remote list so we don't have to manually.
+            // But we don't have a direct refresh trigger exported from FileList, so we'll just 
+            // set remotePath to itself to force a re-render. Wait, path equality won't trigger.
+            // Actually, we can just let the user press Refresh for now.
+        } catch (err) {
+            toast.error(`Operation failed: ${err}`, { id: 'remote-cmd' })
+        }
+    }
+
     return (
         <div className="h-full flex gap-4 p-4">
             <div className="flex-1 min-w-0">
@@ -465,6 +518,8 @@ export function FileExplorer({ settings = defaultSettings, initialRemotePath }: 
                     onTransfer={handleDownload}
                     onDropFiles={handleRemoteDrop}
                     showHiddenFiles={settings.showHiddenFiles}
+                    onPreview={(file, remotePath) => setPreviewFile({ file, remotePath })}
+                    onEdit={(remotePath) => setEditingFile(remotePath)}
                     onContextMenu={(e, file) => {
                         e.preventDefault()
                         setContextMenu({ x: e.clientX, y: e.clientY, file })
@@ -498,6 +553,22 @@ export function FileExplorer({ settings = defaultSettings, initialRemotePath }: 
                         </button>
                     )}
 
+                    {!contextMenu.file.isDirectory && contextMenu.file.name.match(/\.(jpg|jpeg|png|gif|webp|svg|bmp|pdf)$/i) && (
+                        <button
+                            className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700 hover:text-white transition-colors flex items-center gap-2"
+                            onClick={() => {
+                                const fullPath = remotePath === '/'
+                                    ? `/${contextMenu.file.name}`
+                                    : `${remotePath}/${contextMenu.file.name}`
+                                setPreviewFile({ file: contextMenu.file, remotePath: fullPath })
+                                setContextMenu(null)
+                            }}
+                        >
+                            <Eye className="w-4 h-4" />
+                            Preview
+                        </button>
+                    )}
+
                     {!contextMenu.file.isDirectory && (
                         <button
                             className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700 hover:text-white transition-colors flex items-center gap-2"
@@ -519,6 +590,58 @@ export function FileExplorer({ settings = defaultSettings, initialRemotePath }: 
                         </button>
                     )}
 
+                    {!contextMenu.file.isDirectory && contextMenu.file.name.match(/\.(zip|tar\.gz|tgz)$/i) && (
+                        <button
+                            className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700 hover:text-white transition-colors"
+                            onClick={() => {
+                                const file = contextMenu.file
+                                setContextMenu(null)
+                                let cmd = `cd "${remotePath}" && `
+                                if (file.name.endsWith('.zip')) {
+                                    cmd += `unzip -o "${file.name}"`
+                                } else {
+                                    cmd += `tar -xzf "${file.name}"`
+                                }
+                                handleRemoteCmd(cmd, `Extracted ${file.name}`)
+                            }}
+                        >
+                            Extract Archive
+                        </button>
+                    )}
+
+                    {contextMenu.file.isDirectory && (
+                        <button
+                            className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700 hover:text-white transition-colors"
+                            onClick={() => {
+                                const file = contextMenu.file
+                                setContextMenu(null)
+                                handleRemoteCmd(`cd "${remotePath}" && zip -r "${file.name}.zip" "${file.name}"`, `Compressed ${file.name}`)
+                            }}
+                        >
+                            Compress to .zip
+                        </button>
+                    )}
+
+                    <button
+                        className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700 hover:text-white transition-colors border-t border-zinc-700/50 mt-1 pt-1.5"
+                        onClick={() => {
+                            setChmodDialog(contextMenu.file)
+                            setContextMenu(null)
+                        }}
+                    >
+                        Change Permissions (chmod)
+                    </button>
+
+                    <button
+                        className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700 hover:text-white transition-colors border-b border-zinc-700/50 mb-1 pb-1.5"
+                        onClick={() => {
+                            setChownDialog(contextMenu.file)
+                            setContextMenu(null)
+                        }}
+                    >
+                        Change Owner (chown)
+                    </button>
+
                     <button
                         className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700 hover:text-white transition-colors"
                         onClick={() => {
@@ -528,6 +651,86 @@ export function FileExplorer({ settings = defaultSettings, initialRemotePath }: 
                     >
                         Download
                     </button>
+                </div>
+            )}
+
+            {/* Editor Modal */}
+            {editingFile && (
+                <FileEditor
+                    remotePath={editingFile}
+                    onClose={() => setEditingFile(null)}
+                />
+            )}
+
+            {/* Media Viewer Modal */}
+            {previewFile && (
+                <MediaViewer
+                    file={previewFile.file}
+                    remotePath={previewFile.remotePath}
+                    onClose={() => setPreviewFile(null)}
+                    onDownload={() => {
+                        handleDownload(previewFile.file)
+                        setPreviewFile(null)
+                    }}
+                />
+            )}
+
+            {/* Modals for Chmod/Chown */}
+            {chmodDialog && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="w-[300px] bg-zinc-900 border border-zinc-700 rounded-lg p-4 shadow-xl">
+                        <h3 className="text-zinc-100 font-medium mb-2">Change Permissions</h3>
+                        <p className="text-xs text-zinc-400 mb-4 truncate">{chmodDialog.name}</p>
+                        <input
+                            autoFocus
+                            className="w-full bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-100 mb-4 focus:outline-none focus:border-blue-500"
+                            value={chmodeValue}
+                            onChange={(e) => setChmodeValue(e.target.value)}
+                            placeholder="e.g. 755 or 644"
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    handleRemoteCmd(`cd "${remotePath}" && chmod ${chmodDialog.isDirectory ? '-R ' : ''}${chmodeValue} "${chmodDialog.name}"`, 'Permissions updated')
+                                    setChmodDialog(null)
+                                } else if (e.key === 'Escape') setChmodDialog(null)
+                            }}
+                        />
+                        <div className="flex justify-end gap-2">
+                            <button className="px-3 py-1.5 text-xs text-zinc-400 hover:text-white" onClick={() => setChmodDialog(null)}>Cancel</button>
+                            <button className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded" onClick={() => {
+                                handleRemoteCmd(`cd "${remotePath}" && chmod ${chmodDialog.isDirectory ? '-R ' : ''}${chmodeValue} "${chmodDialog.name}"`, 'Permissions updated')
+                                setChmodDialog(null)
+                            }}>Apply</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {chownDialog && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="w-[300px] bg-zinc-900 border border-zinc-700 rounded-lg p-4 shadow-xl">
+                        <h3 className="text-zinc-100 font-medium mb-2">Change Owner</h3>
+                        <p className="text-xs text-zinc-400 mb-4 truncate">{chownDialog.name}</p>
+                        <input
+                            autoFocus
+                            className="w-full bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-100 mb-4 focus:outline-none focus:border-blue-500"
+                            value={chownValue}
+                            onChange={(e) => setChownValue(e.target.value)}
+                            placeholder="user:group"
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    handleRemoteCmd(`cd "${remotePath}" && chown ${chownDialog.isDirectory ? '-R ' : ''}${chownValue} "${chownDialog.name}"`, 'Owner updated')
+                                    setChownDialog(null)
+                                } else if (e.key === 'Escape') setChownDialog(null)
+                            }}
+                        />
+                        <div className="flex justify-end gap-2">
+                            <button className="px-3 py-1.5 text-xs text-zinc-400 hover:text-white" onClick={() => setChownDialog(null)}>Cancel</button>
+                            <button className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded" onClick={() => {
+                                handleRemoteCmd(`cd "${remotePath}" && chown ${chownDialog.isDirectory ? '-R ' : ''}${chownValue} "${chownDialog.name}"`, 'Owner updated')
+                                setChownDialog(null)
+                            }}>Apply</button>
+                        </div>
+                    </div>
                 </div>
             )}
 

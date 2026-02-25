@@ -10,9 +10,11 @@ import { TerminalView } from './components/TerminalView'
 import { SettingsView } from './components/SettingsView'
 import { AppSettings, defaultSettings, SSHProfile } from './types'
 import { MasterPasswordModal } from './components/MasterPasswordModal'
+import { CommandPalette } from './components/CommandPalette'
+import { ServerDashboard } from './components/ServerDashboard'
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'manager' | 'sessions' | 'terminal' | 'settings'>('manager')
+  const [activeTab, setActiveTab] = useState<'manager' | 'sessions' | 'terminal' | 'dashboard' | 'settings'>('manager')
   const [isConnected, setIsConnected] = useState(false)
   const [activeConfig, setActiveConfig] = useState<Partial<SSHProfile> | null>(null)
   const [settings, setSettings] = useState<AppSettings>(defaultSettings)
@@ -80,6 +82,28 @@ function App() {
 
   return (
     <div className="h-screen w-screen overflow-hidden text-zinc-100 antialiased selection:bg-blue-500/30">
+      <CommandPalette
+        profiles={profiles}
+        onNavigate={setActiveTab}
+        onConnect={async (profile) => {
+          try {
+            await window.api.remoteConnect({
+              host: profile.host,
+              port: profile.port,
+              username: profile.username,
+              password: profile.password,
+              privateKeyPath: profile.privateKeyPath,
+              protocol: profile.protocol || 'sftp'
+            })
+            setIsConnected(true)
+            setActiveConfig(profile)
+            setActiveTab('manager')
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'Connection failed'
+            toast.error(message)
+          }
+        }}
+      />
       {!isUnlocked && (
         <MasterPasswordModal onUnlock={() => setIsUnlocked(true)} />
       )}
@@ -154,6 +178,9 @@ function App() {
         )}
         {activeTab === 'terminal' && (
           <TerminalView />
+        )}
+        {activeTab === 'dashboard' && (
+          <ServerDashboard />
         )}
         {activeTab === 'settings' && (
           <SettingsView onSave={setSettings} />

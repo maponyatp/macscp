@@ -1,7 +1,10 @@
 import { useEffect, useRef } from 'react'
-import { Terminal as TerminalIcon } from 'lucide-react'
+import { Terminal as TerminalIcon, Copy, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
+import { WebglAddon } from '@xterm/addon-webgl'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import 'xterm/css/xterm.css'
 
 export function TerminalView() {
@@ -28,8 +31,17 @@ export function TerminalView() {
 
         const fitAddon = new FitAddon()
         term.loadAddon(fitAddon)
+        term.loadAddon(new WebLinksAddon())
 
         term.open(containerRef.current)
+
+        try {
+            const webglAddon = new WebglAddon()
+            term.loadAddon(webglAddon)
+        } catch (e) {
+            console.warn('WebGL addon failed to load, falling back to standard renderer', e)
+        }
+
         fitAddon.fit()
 
         termRef.current = term
@@ -84,6 +96,30 @@ export function TerminalView() {
                 <TerminalIcon className="h-3.5 w-3.5 text-zinc-500" />
                 <span className="text-zinc-400 text-xs font-medium">Remote Terminal</span>
                 <div className="flex-1" />
+                <div className="flex gap-2 mr-4">
+                    <button
+                        onClick={() => termRef.current?.clear()}
+                        className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-zinc-400 bg-white/5 hover:bg-white/10 hover:text-white transition-colors rounded"
+                        title="Clear Terminal Line"
+                    >
+                        <Trash2 className="h-3 w-3" />
+                        Clear
+                    </button>
+                    <button
+                        onClick={() => {
+                            if (!termRef.current) return
+                            termRef.current.selectAll()
+                            document.execCommand('copy')
+                            termRef.current.clearSelection()
+                            toast.success('Terminal output copied to clipboard', { id: 'term-copy' })
+                        }}
+                        className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-zinc-400 bg-white/5 hover:bg-white/10 hover:text-white transition-colors rounded"
+                        title="Copy All Output"
+                    >
+                        <Copy className="h-3 w-3" />
+                        Copy
+                    </button>
+                </div>
                 <div className="flex gap-1.5">
                     <div className="w-2.5 h-2.5 rounded-full bg-zinc-600/50" />
                     <div className="w-2.5 h-2.5 rounded-full bg-zinc-600/50" />

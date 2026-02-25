@@ -22,31 +22,31 @@ vi.mock('ssh2', async () => {
     const EventEmitter = (await import('events')).EventEmitter
 
     class MockClient extends EventEmitter { }
-    // @ts-ignore
+    // @ts-expect-error Mocking connect
     MockClient.prototype.connect = vi.fn().mockReturnThis()
-    // @ts-ignore
+    // @ts-expect-error Mocking sftp
     MockClient.prototype.sftp = vi.fn()
-    // @ts-ignore
+    // @ts-expect-error Mocking shell
     MockClient.prototype.shell = vi.fn()
-    // @ts-ignore
+    // @ts-expect-error Mocking end
     MockClient.prototype.end = vi.fn()
 
     class MockSFTPWrapper extends EventEmitter { }
-    // @ts-ignore
+    // @ts-expect-error Mocking readdir
     MockSFTPWrapper.prototype.readdir = vi.fn()
-    // @ts-ignore
+    // @ts-expect-error Mocking mkdir
     MockSFTPWrapper.prototype.mkdir = vi.fn()
-    // @ts-ignore
+    // @ts-expect-error Mocking fastGet
     MockSFTPWrapper.prototype.fastGet = vi.fn()
-    // @ts-ignore
+    // @ts-expect-error Mocking fastPut
     MockSFTPWrapper.prototype.fastPut = vi.fn()
-    // @ts-ignore
+    // @ts-expect-error Mocking stat
     MockSFTPWrapper.prototype.stat = vi.fn()
-    // @ts-ignore
+    // @ts-expect-error Mocking createReadStream
     MockSFTPWrapper.prototype.createReadStream = vi.fn()
-    // @ts-ignore
+    // @ts-expect-error Mocking writeFile
     MockSFTPWrapper.prototype.writeFile = vi.fn()
-    // @ts-ignore
+    // @ts-expect-error Mocking end
     MockSFTPWrapper.prototype.end = vi.fn()
 
     return {
@@ -69,19 +69,19 @@ vi.mock('node:fs/promises', () => ({
 
 describe('SSHHandler', () => {
     let handler: SSHHandler
-    let mockClientPrototype: any
-    let mockSftpInstance: any
+    let mockClientPrototype: { connect: import('vitest').Mock, sftp: import('vitest').Mock }
+    let mockSftpInstance: { readdir: import('vitest').Mock }
 
     beforeEach(async () => {
         vi.clearAllMocks()
 
         // Retrieve the mocked classes to spy on them
         const ssh2 = await import('ssh2')
-        // @ts-ignore
+        // @ts-expect-error Using mock prototype
         mockClientPrototype = ssh2.Client.prototype
 
         // Setup default behaviors
-        mockClientPrototype.connect.mockImplementation(function (this: any) {
+        mockClientPrototype.connect.mockImplementation(function (this: import('events').EventEmitter) {
             setTimeout(() => {
                 this.emit('ready')
             }, 0)
@@ -89,10 +89,10 @@ describe('SSHHandler', () => {
         })
 
         // We need an instance of SFTPWrapper to be passed to the callback
-        // @ts-ignore
+        // @ts-expect-error Instantiating mock
         mockSftpInstance = new ssh2.SFTPWrapper()
 
-        mockClientPrototype.sftp.mockImplementation((cb: any) => {
+        mockClientPrototype.sftp.mockImplementation((cb: (err: null, inst: unknown) => void) => {
             cb(null, mockSftpInstance)
             return true
         })
@@ -126,7 +126,7 @@ describe('SSHHandler', () => {
             password: 'password'
         }
 
-        mockClientPrototype.connect.mockImplementation(function (this: any) {
+        mockClientPrototype.connect.mockImplementation(function (this: import('events').EventEmitter) {
             setTimeout(() => {
                 this.emit('error', new Error('Connection failed'))
             }, 0)
@@ -165,7 +165,7 @@ describe('SSHHandler', () => {
         ]
 
         // This needs to be set on the instance that was returned
-        mockSftpInstance.readdir.mockImplementation((_path: string, cb: any) => {
+        mockSftpInstance.readdir.mockImplementation((_path: string, cb: (err: null, data: unknown) => void) => {
             cb(null, mockEntries)
         })
 

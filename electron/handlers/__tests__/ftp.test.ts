@@ -21,12 +21,12 @@ vi.mock('basic-ftp', () => {
 
 describe('FTPHandler', () => {
     let handler: FTPHandler
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let mockClientPrototype: any
 
     beforeEach(() => {
         vi.clearAllMocks()
         handler = new FTPHandler()
-        // @ts-ignore
         mockClientPrototype = ftp.Client.prototype
     })
 
@@ -41,6 +41,7 @@ describe('FTPHandler', () => {
 
         mockClientPrototype.access.mockResolvedValue(undefined)
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const result = await handler.connect(config as any)
         expect(result).toEqual({ status: 'connected' })
         expect(mockClientPrototype.access).toHaveBeenCalled()
@@ -53,6 +54,7 @@ describe('FTPHandler', () => {
             password: 'password'
         }
         mockClientPrototype.access.mockResolvedValue(undefined)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await handler.connect(config as any)
 
         const mockList = [

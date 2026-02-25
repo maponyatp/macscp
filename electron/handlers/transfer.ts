@@ -7,7 +7,7 @@ import { remoteDispatcher } from './remote'
 export class TransferManager {
     private queue: TransferTask[] = []
     private activeTasks = 0
-    private maxConcurrent = 3
+    private maxConcurrent = 10
     private activeControllers = new Map<string, AbortController>()
     private win: BrowserWindow | null = null
     private app: App | null = null
@@ -147,9 +147,12 @@ export class TransferManager {
             this.activeControllers.set(task.id, controller)
 
             if (task.type === 'download') {
-                if (task.isDirectory && (remoteDispatcher.handler as any).downloadDirWithProgress) {
+                const handler = remoteDispatcher.handler as unknown as {
+                    downloadDirWithProgress?: (remotePath: string, localPath: string, onProgress: (t: number, c: number, s: number) => void, onGlobalProgress: (g: number) => void, totalSize: number, state: { transferred: number }, signal: AbortSignal) => Promise<void>
+                }
+                if (task.isDirectory && handler.downloadDirWithProgress) {
                     const state = { transferred: startOffset }
-                    await (remoteDispatcher.handler as any).downloadDirWithProgress(
+                    await handler.downloadDirWithProgress(
                         task.remotePath,
                         task.localPath,
                         onProgress,
@@ -164,9 +167,12 @@ export class TransferManager {
                     await remoteDispatcher.getWithProgress(task.remotePath, task.localPath, onProgress, startOffset, controller.signal)
                 }
             } else {
-                if (task.isDirectory && (remoteDispatcher.handler as any).uploadDirWithProgress) {
+                const handler = remoteDispatcher.handler as unknown as {
+                    uploadDirWithProgress?: (localPath: string, remotePath: string, onProgress: (t: number, c: number, s: number) => void, onGlobalProgress: (g: number) => void, totalSize: number, state: { transferred: number }, signal: AbortSignal) => Promise<void>
+                }
+                if (task.isDirectory && handler.uploadDirWithProgress) {
                     const state = { transferred: startOffset }
-                    await (remoteDispatcher.handler as any).uploadDirWithProgress(
+                    await handler.uploadDirWithProgress(
                         task.localPath,
                         task.remotePath,
                         onProgress,

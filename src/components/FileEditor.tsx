@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { X, Save, Loader2, FileText, ExternalLink, Code2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import Editor from '@monaco-editor/react'
 
 interface FileEditorProps {
     remotePath: string
@@ -43,7 +42,8 @@ export function FileEditor({ remotePath, onClose, onOpenExternal }: FileEditorPr
     const [isDirty, setIsDirty] = useState(false)
     const [mode, setMode] = useState<'edit' | 'preview'>('edit')
 
-    const textareaRef = useRef<HTMLTextAreaElement>(null)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const editorRef = useRef<any>(null)
 
     const fileName = remotePath.split('/').pop() || remotePath
     const extension = fileName.split('.').pop()?.toLowerCase() || ''
@@ -92,25 +92,17 @@ export function FileEditor({ remotePath, onClose, onOpenExternal }: FileEditorPr
         }
     }
 
-    // Handle tab key in textarea
-    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        if (e.key === 'Tab') {
-            e.preventDefault()
-            const start = e.currentTarget.selectionStart
-            const end = e.currentTarget.selectionEnd
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handleEditorDidMount = (editor: any, monaco: any) => {
+        editorRef.current = editor
 
-            const newContent = content.substring(0, start) + '    ' + content.substring(end)
-            setContent(newContent)
-            setIsDirty(newContent !== initialContent)
-
-            // Set cursor position after update
-            setTimeout(() => {
-                if (textareaRef.current) {
-                    textareaRef.current.selectionStart = textareaRef.current.selectionEnd = start + 4
-                }
-            }, 0)
-        }
+        // Register Cmd+S / Ctrl+S
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+            handleSave()
+        })
     }
+
+    // Monaco handles its own keyboard navigation and spacing
 
     if (loading) {
         return (
@@ -196,42 +188,37 @@ export function FileEditor({ remotePath, onClose, onOpenExternal }: FileEditorPr
                 </div>
 
                 {/* Editor Area */}
-                <div className="flex-1 min-h-0 bg-zinc-950/80 relative overflow-hidden group">
-                    {mode === 'edit' ? (
-                        <textarea
-                            ref={textareaRef}
-                            value={content}
-                            onChange={(e) => {
-                                setContent(e.target.value)
-                                setIsDirty(e.target.value !== initialContent)
-                            }}
-                            onKeyDown={handleKeyDown}
-                            autoFocus
-                            spellCheck={false}
-                            className="w-full h-full bg-transparent text-zinc-300 p-6 font-mono text-sm resize-none focus:outline-none focus:ring-0 leading-relaxed custom-scrollbar selection:bg-blue-500/30 whitespace-pre z-0"
-                            placeholder="Type code here..."
-                        />
-                    ) : (
-                        <div className="w-full h-full overflow-auto custom-scrollbar">
-                            <SyntaxHighlighter
-                                language={language}
-                                style={vscDarkPlus}
-                                showLineNumbers={true}
-                                lineNumberStyle={{ minWidth: '3.5em', paddingRight: '1em', color: '#4b5563', textAlign: 'right', userSelect: 'none' }}
-                                customStyle={{
-                                    margin: 0,
-                                    padding: '1.5rem',
-                                    backgroundColor: 'transparent',
-                                    fontSize: '0.875rem',
-                                    lineHeight: '1.625',
-                                    height: 'auto',
-                                    minHeight: '100%',
-                                }}
-                            >
-                                {content || ' '}
-                            </SyntaxHighlighter>
-                        </div>
-                    )}
+                <div className="flex-1 min-h-0 bg-[#1e1e1e] relative group">
+                    <Editor
+                        height="100%"
+                        language={language}
+                        theme="vs-dark"
+                        value={content}
+                        options={{
+                            readOnly: mode === 'preview',
+                            minimap: { enabled: mode === 'edit' },
+                            fontSize: 13,
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                            wordWrap: 'on',
+                            padding: { top: 16 },
+                            cursorBlinking: 'smooth',
+                            smoothScrolling: true,
+                            formatOnPaste: true,
+                        }}
+                        onChange={(value) => {
+                            if (value !== undefined) {
+                                setContent(value)
+                                setIsDirty(value !== initialContent)
+                            }
+                        }}
+                        onMount={handleEditorDidMount}
+                        loading={
+                            <div className="flex items-center justify-center h-full text-zinc-500 gap-2">
+                                <Loader2 className="h-5 w-5 animate-spin" />
+                                <span className="text-sm font-medium">Initializing Monaco Editor...</span>
+                            </div>
+                        }
+                    />
 
                     {/* Floating Indicator */}
                     <div className="absolute top-4 right-6 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
@@ -288,9 +275,9 @@ export function FileEditor({ remotePath, onClose, onOpenExternal }: FileEditorPr
                     background-clip: content-box;
                 }
                 
-                /* Prism code font consistency */
-                pre code {
-                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+                .custom-scrollbar::-webkit-scrollbar:hover {
+                    width: 14px;
+                    height: 14px;
                 }
             ` }} />
         </div>

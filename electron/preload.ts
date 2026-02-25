@@ -39,7 +39,9 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.off('remote:shell-data', listener)
   },
   remoteReadFile: (remotePath: string) => ipcRenderer.invoke('remote:read-file', remotePath),
+  remoteReadBuffer: (remotePath: string) => ipcRenderer.invoke('remote:read-buffer', remotePath),
   remoteWriteFile: (remotePath: string, content: string) => ipcRenderer.invoke('remote:write-file', { remotePath, content }),
+  remoteExecCommand: (command: string) => ipcRenderer.invoke('remote:exec-command', command),
   remoteEditExternal: (remotePath: string) => ipcRenderer.invoke('remote:edit-external', remotePath),
   onRemoteEditStatus: (callback: (data: { path: string, status: string, error?: string }) => void) => {
     const listener = (_: Electron.IpcRendererEvent, data: { path: string, status: string, error?: string }) => callback(data)

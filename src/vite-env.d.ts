@@ -27,7 +27,9 @@ declare global {
             remoteStartDrag: (remotePath: string) => void
             onShellData: (callback: (data: string) => void) => () => void
             remoteReadFile: (remotePath: string) => Promise<string>
+            remoteReadBuffer: (remotePath: string) => Promise<string>
             remoteWriteFile: (remotePath: string, content: string) => Promise<void>
+            remoteExecCommand: (command: string) => Promise<string>
             remoteEditExternal: (remotePath: string) => Promise<{ localPath: string }>
             onRemoteEditStatus: (callback: (data: { path: string, status: string, error?: string }) => void) => () => void
             settingsListProfiles: () => Promise<SSHProfile[]>

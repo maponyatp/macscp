@@ -120,7 +120,9 @@ function setupIpcHandlers() {
   ipcMain.handle('remote:shell-write', (_: Electron.IpcMainInvokeEvent, data: string) => sshHandler.writeShell(data))
   ipcMain.handle('remote:shell-resize', (_: Electron.IpcMainInvokeEvent, { rows, cols }: { rows: number, cols: number }) => sshHandler.resizeShell(rows, cols))
   ipcMain.handle('remote:read-file', (_: Electron.IpcMainInvokeEvent, remotePath: string) => remoteDispatcher.readFile(remotePath))
+  ipcMain.handle('remote:read-buffer', (_: Electron.IpcMainInvokeEvent, remotePath: string) => remoteDispatcher.readBuffer(remotePath))
   ipcMain.handle('remote:write-file', (_: Electron.IpcMainInvokeEvent, { remotePath, content }: { remotePath: string, content: string }) => remoteDispatcher.writeFile(remotePath, content))
+  ipcMain.handle('remote:exec-command', (_: Electron.IpcMainInvokeEvent, command: string) => remoteDispatcher.execCommand(command))
 
   ipcMain.handle('remote:edit-external', async (event: Electron.IpcMainInvokeEvent, remotePath: string) => {
     const fileName = path.basename(remotePath)
